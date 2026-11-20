@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { socket } from '../socket'
-import type { GameState, GameActions, Player, RoundResult, Question, ChatMessage, RuleMode, QrMode } from '../types/game'
+import type { GameState, GameActions, GamePhase, Player, RoundResult, Question, ChatMessage, RuleMode, QrMode } from '../types/game'
 import {
   questions as defaultQuestions,
   majorityQuestions,
@@ -91,7 +91,7 @@ const initialState: GameState = {
   ...defaultInitialState,
   ...persisted,
   questionsList:
-    persisted.questionsList && persisted.questionsList.length >= 100 && persisted.questionsList.some((q) => q.id >= 101)
+    persisted.questionsList && persisted.questionsList.length >= 100 && persisted.questionsList.some((q) => Number(q.id) >= 101)
       ? persisted.questionsList
       : defaultQuestions,
   chatMessages: persisted.chatMessages && persisted.chatMessages.length > 0 ? persisted.chatMessages : defaultInitialState.chatMessages,
@@ -378,10 +378,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       // 현재 ruleMode에 따른 대상 질문 풀 (majority: 1~100번 / minority: 101번 이상)
       let targetPool: Question[]
       if (ruleMode === 'minority') {
-        const poolFromList = questionsList.filter((q) => q.id >= 101)
+        const poolFromList = questionsList.filter((q) => Number(q.id) >= 101)
         targetPool = poolFromList.length > 0 ? poolFromList : minorityQuestions
       } else {
-        const poolFromList = questionsList.filter((q) => q.id <= 100)
+        const poolFromList = questionsList.filter((q) => Number(q.id) <= 100)
         targetPool = poolFromList.length > 0 ? poolFromList : majorityQuestions
       }
 
