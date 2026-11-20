@@ -5,13 +5,17 @@ import cors from 'cors'
 import os from 'os'
 import path from 'path'
 import fs from 'fs'
+import events from 'events'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
+
+// 3번 서바이벌 퀴즈 규격: 150인 이상 동시 접속 시 리스너 초과 경고 방지 및 메모리 보호
+events.EventEmitter.defaultMaxListeners = 250
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// 프로세스 크래시 방어 쉴드
+// 프로세스 크래시 방어 쉴드 (3번 프로젝트 동일)
 process.on('uncaughtException', (err) => {
   console.error('🛡️ [SERVER CRASH SHIELD] Uncaught Exception 방어됨:', err)
 })
@@ -21,10 +25,14 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express()
 const port = process.env.PORT || 5000
-const isRender = Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_URL)
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER
 let publicTunnelUrl = process.env.RENDER_EXTERNAL_URL || ''
 let sshProcess = null
 let isReconnectingTunnel = false
+
+// Render 및 클라우드 즉시 응답 헬스체크 라우트 (3번 프로젝트 동일)
+app.get('/healthz', (req, res) => res.status(200).send('OK'))
+app.get('/health', (req, res) => res.status(200).send('OK'))
 
 app.use(cors({ origin: '*' }))
 app.use(express.json())
@@ -37,15 +45,19 @@ if (fs.existsSync(clientDistPath)) {
 
 const httpServer = http.createServer(app)
 
-// 2. 150인 동시 접속 최적화 Socket.io 설정
+// 2. 3번 서바이벌 퀴즈 동일 최적화 Socket.io 설정 (150인 동시 접속 최적화)
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,
+  maxHttpBufferSize: 2e7,
   perMessageDeflate: false,
   allowEIO3: true,
 })
+
+// 3번 서바이벌 퀴즈 메인 룸 상수
+const SOCKET_ROOM_MAIN = 'room:survival_quiz_main'
 
 // 인메모리 게임 상태
 const gameState = {
@@ -54,9 +66,17 @@ const gameState = {
   ruleMode: 'majority',
   qrMode: 'wifi',
   serverHostUrl: '',
-  currentQuestion: null,
+  currentQuestion: {
+    id: 1,
+    category: '음식',
+    optionA: '평생 치킨만 먹기',
+    optionB: '평생 피자만 먹기',
+    isFinals: false,
+  },
   currentResult: null,
   isFinals: false,
+  isGameOver: false,
+  soleWinnerId: null,
   isPaused: false,
   timeLimit: 15,
   votingDeadline: null,
@@ -66,7 +86,11 @@ const gameState = {
   chatMessages: [],
 }
 
+// 3번 서바이벌 퀴즈 규격: 상태 브로드캐스트 (game:state_sync + state:sync 병행 전송)
 function broadcastState() {
+  io.to(SOCKET_ROOM_MAIN).emit('game:state_sync', gameState)
+  io.to(SOCKET_ROOM_MAIN).emit('state:sync', gameState)
+  io.emit('game:state_sync', gameState)
   io.emit('state:sync', gameState)
 }
 
@@ -75,7 +99,6 @@ function applyAdminSync(updates) {
     const { players: incomingPlayers, ...safeUpdates } = updates
     Object.assign(gameState, safeUpdates)
 
-    // 1. 관리자 store의 각 플레이어 status ('alive' | 'eliminated')를 서버 players에 안전하게 반영
     if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
       const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
       for (const p of gameState.players) {
@@ -85,7 +108,6 @@ function applyAdminSync(updates) {
       }
     }
 
-    // 2. 탈락자 명단이 포함되어 있으면 서버 참가자 상태(status: eliminated) 안전하게 반영
     if (updates.currentResult?.eliminated && Array.isArray(updates.currentResult.eliminated)) {
       const elimSet = new Set(updates.currentResult.eliminated)
       for (const p of gameState.players) {
@@ -96,7 +118,6 @@ function applyAdminSync(updates) {
       }
     }
 
-    // 라운드 결과 객체 보존
     if (updates.currentResult) {
       gameState.currentResult = updates.currentResult
     }
@@ -106,19 +127,24 @@ function applyAdminSync(updates) {
   }
 }
 
-// 3. Socket.io 실시간 이벤트 핸들러
+// 3. Socket.io 실시간 이벤트 핸들러 (3번 서바이벌 퀴즈 규격)
 io.on('connection', (socket) => {
-  // 최초 접속 시 현재 상태 및 터널 주소 즉시 전송
+  // 메인 룸 자동 조인
+  socket.join(SOCKET_ROOM_MAIN)
+
+  // 최초 접속 시 현재 상태 즉시 전달 (3번 규격: game:state_sync)
+  socket.emit('game:state_sync', gameState)
   socket.emit('state:sync', gameState)
+
   if (publicTunnelUrl) {
     socket.emit('server:tunnel_updated', publicTunnelUrl)
   }
 
-  // 참가자 참가 (player:join)
+  // 1. 참가자 등록 (player:join)
   socket.on('player:join', (data, callback) => {
     try {
       const nickname = (data?.nickname || '').trim()
-      const requestedId = data?.id
+      const requestedId = data?.id || data?.token
 
       if (!nickname) {
         if (callback) callback({ success: false, error: '닉네임을 입력해주세요.' })
@@ -131,6 +157,7 @@ io.on('connection', (socket) => {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
           nickname,
           status: 'alive',
+          isAlive: true,
           joinedAt: Date.now(),
         }
         gameState.players.push(player)
@@ -147,18 +174,14 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 참가자 닉네임 수정 (player:change_nickname)
+  // 1-1. 참가자 닉네임 수정
   socket.on('player:change_nickname', (data, callback) => {
     try {
       const { id, newNickname } = data || {}
       const trimmed = (newNickname || '').trim()
 
-      if (!trimmed) {
-        if (callback) callback({ success: false, error: '닉네임을 입력해주세요.' })
-        return
-      }
-      if (trimmed.length > 10) {
-        if (callback) callback({ success: false, error: '10자 이하로 입력해주세요.' })
+      if (!trimmed || trimmed.length > 10) {
+        if (callback) callback({ success: false, error: '1~10자 이내로 입력해주세요.' })
         return
       }
 
@@ -166,41 +189,34 @@ io.on('connection', (socket) => {
       if (player) {
         const oldNick = player.nickname
         player.nickname = trimmed
-        console.log(`✏️ [NICKNAME CHANGED] ${oldNick} -> ${trimmed} (ID: ${id})`)
-
+        console.log(`✏️ [NICKNAME CHANGED] ${oldNick} -> ${trimmed}`)
         for (const msg of gameState.chatMessages) {
           if (msg.nickname === oldNick) msg.nickname = trimmed
         }
-
         broadcastState()
         if (callback) callback({ success: true, player })
       } else {
         if (callback) callback({ success: false, error: '참가자 정보를 찾을 수 없습니다.' })
       }
     } catch (e) {
-      console.error('[player:change_nickname Error]', e)
       if (callback) callback({ success: false, error: e.message })
     }
   })
 
-  // 참가자 투표 제출 (player:vote)
-  socket.on('player:vote', (data, callback) => {
+  // 2. 참가자 투표 제출 (player:vote 및 3번 호환 player:submit_answer)
+  const handleVote = (playerId, choice, callback) => {
     try {
-      const { playerId, choice } = data || {}
       if (!playerId || (choice !== 'A' && choice !== 'B')) {
         if (callback) callback({ success: false, error: '잘못된 투표 요청입니다.' })
         return
       }
 
-      // 탈락자 투표 원천 차단
       const player = gameState.players.find((p) => p.id === playerId)
-      if (player && player.status === 'eliminated') {
-        console.warn(`🚫 [VOTE REJECTED] 탈락자 (${player.nickname})의 투표 시도 차단됨`)
+      if (player && (player.status === 'eliminated' || player.isAlive === false)) {
         if (callback) callback({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
         return
       }
 
-      // 투표 허용 단계 확인 (voting, question, revealing 버퍼)
       const allowedPhases = ['voting', 'question', 'revealing']
       if (!allowedPhases.includes(gameState.phase)) {
         if (callback) callback({ success: false, error: '투표 진행 중이 아닙니다.' })
@@ -212,12 +228,227 @@ io.on('connection', (socket) => {
       broadcastState()
       if (callback) callback({ success: true })
     } catch (e) {
-      console.error('[player:vote Error]', e)
       if (callback) callback({ success: false, error: e.message })
+    }
+  }
+
+  socket.on('player:vote', (data, callback) => {
+    handleVote(data?.playerId, data?.choice, callback)
+  })
+
+  socket.on('player:submit_answer', (data, callback) => {
+    const choice = data?.choice || (data?.answerIndex === 0 ? 'A' : (data?.answerIndex === 1 ? 'B' : null))
+    const pId = data?.playerId || data?.token || socket.id
+    handleVote(pId, choice, callback)
+  })
+
+  // ==========================================
+  // 3. 3번 서바이벌 퀴즈 규격 관리자 핵심 이벤트
+  // ==========================================
+
+  // [핵심] 게임 시작: 3번 프로젝트의 admin:start_game
+  socket.on('admin:start_game', (data, callback) => {
+    try {
+      console.log('🚀 [3번 서바이벌 퀴즈 규격] admin:start_game 수신 -> 전 기기 동시 라운드 시작!')
+      gameState.roundNumber = 1
+      gameState.votes = {}
+      gameState.currentResult = null
+      gameState.isGameOver = false
+      gameState.soleWinnerId = null
+      gameState.isPaused = false
+
+      // 전원 생존 복구
+      gameState.players.forEach((p) => {
+        p.status = 'alive'
+        p.isAlive = true
+        p.eliminatedRound = undefined
+      })
+
+      if (data?.question) {
+        gameState.currentQuestion = data.question
+      }
+      if (data?.ruleMode) {
+        gameState.ruleMode = data.ruleMode
+      }
+
+      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+      gameState.timeLimit = limit
+
+      if (data?.autoStartVoting !== false) {
+        gameState.phase = 'voting'
+        gameState.votingDeadline = Date.now() + limit * 1000
+        gameState.timeLeft = limit
+      } else {
+        gameState.phase = 'question'
+        gameState.votingDeadline = null
+        gameState.timeLeft = limit
+      }
+
+      broadcastState()
+
+      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+        roundNumber: 1,
+        question: gameState.currentQuestion,
+        timeLimit: gameState.timeLimit,
+        votingDeadline: gameState.votingDeadline,
+      })
+
+      if (callback) callback({ success: true, phase: gameState.phase })
+    } catch (err) {
+      console.error('[admin:start_game Error]:', err)
+      if (callback) callback({ success: false, error: err.message })
     }
   })
 
-  // 관리자 상태 동기화 (admin:sync)
+  // 15초 투표 시작
+  socket.on('admin:start_voting', (data, callback) => {
+    try {
+      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+      gameState.phase = 'voting'
+      gameState.timeLimit = limit
+      gameState.votingDeadline = Date.now() + limit * 1000
+      gameState.timeLeft = limit
+      gameState.isPaused = false
+      gameState.votes = {}
+      broadcastState()
+      if (callback) callback({ success: true })
+    } catch (err) {
+      if (callback) callback({ success: false })
+    }
+  })
+
+  // 투표 조기 마감 및 결과 공개 서스펜스 카운트다운
+  socket.on('admin:end_voting', (data, callback) => {
+    try {
+      gameState.phase = 'revealing'
+      gameState.timeLeft = 3
+      gameState.isPaused = false
+      broadcastState()
+      if (callback) callback({ success: true })
+    } catch (err) {
+      if (callback) callback({ success: false })
+    }
+  })
+
+  // 다음 라운드 진행
+  socket.on('admin:next_round', (data, callback) => {
+    try {
+      gameState.roundNumber += 1
+      gameState.votes = {}
+      gameState.currentResult = null
+      if (data?.question) {
+        gameState.currentQuestion = data.question
+      }
+      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+      gameState.timeLimit = limit
+      gameState.phase = 'voting'
+      gameState.votingDeadline = Date.now() + limit * 1000
+      gameState.timeLeft = limit
+      broadcastState()
+
+      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+        roundNumber: gameState.roundNumber,
+        question: gameState.currentQuestion,
+        timeLimit: gameState.timeLimit,
+        votingDeadline: gameState.votingDeadline,
+      })
+      if (callback) callback({ success: true })
+    } catch (err) {
+      if (callback) callback({ success: false })
+    }
+  })
+
+  // 일시정지 및 재개
+  socket.on('admin:pause_game', () => {
+    gameState.isPaused = true
+    broadcastState()
+  })
+
+  socket.on('admin:resume_game', () => {
+    gameState.isPaused = false
+    if (gameState.phase === 'voting' && gameState.timeLeft > 0) {
+      gameState.votingDeadline = Date.now() + gameState.timeLeft * 1000
+    }
+    broadcastState()
+  })
+
+  // 관리자 대기실 복귀 및 게임 리셋 (3번 서바이벌 퀴즈 규격)
+  socket.on('admin:reset_game', (callback) => {
+    gameState.phase = 'lobby'
+    gameState.roundNumber = 0
+    gameState.currentQuestion = null
+    gameState.currentResult = null
+    gameState.isGameOver = false
+    gameState.soleWinnerId = null
+    gameState.isPaused = false
+    gameState.votes = {}
+    gameState.players.forEach((p) => {
+      p.status = 'alive'
+      p.isAlive = true
+      p.eliminatedRound = undefined
+    })
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+    if (callback) callback({ success: true, count: gameState.players.length })
+  })
+
+  socket.on('admin:reset_game_keep_players', (callback) => {
+    gameState.phase = 'lobby'
+    gameState.roundNumber = 0
+    gameState.currentQuestion = null
+    gameState.currentResult = null
+    gameState.isGameOver = false
+    gameState.soleWinnerId = null
+    gameState.isPaused = false
+    gameState.votes = {}
+    gameState.players.forEach((p) => {
+      p.status = 'alive'
+      p.isAlive = true
+      p.eliminatedRound = undefined
+    })
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+    if (callback) callback({ success: true, count: gameState.players.length })
+  })
+
+  socket.on('admin:move_to_lobby', (callback) => {
+    gameState.phase = 'lobby'
+    gameState.roundNumber = 0
+    gameState.currentQuestion = null
+    gameState.currentResult = null
+    gameState.isGameOver = false
+    gameState.soleWinnerId = null
+    gameState.isPaused = false
+    gameState.votes = {}
+    gameState.players.forEach((p) => {
+      p.status = 'alive'
+      p.isAlive = true
+      p.eliminatedRound = undefined
+    })
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+    if (callback) callback({ success: true })
+  })
+
+  socket.on('admin:clear_all_players', (callback) => {
+    gameState.phase = 'lobby'
+    gameState.roundNumber = 0
+    gameState.currentQuestion = null
+    gameState.currentResult = null
+    gameState.isGameOver = false
+    gameState.soleWinnerId = null
+    gameState.players = []
+    gameState.votes = {}
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
+    io.to(SOCKET_ROOM_MAIN).emit('game:reset')
+    if (callback) callback({ success: true })
+  })
+
+  // 클라이언트 전체 동기화 수신 (admin:sync)
   socket.on('admin:sync', (updates) => {
     try {
       applyAdminSync(updates)
@@ -226,14 +457,13 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 관리자 더미 참가자 추가 (admin:add_mock_players)
+  // 관리자 더미 참가자 추가
   socket.on('admin:add_mock_players', (data, callback) => {
     try {
       const incoming = Array.isArray(data?.newPlayers) ? data.newPlayers : []
       if (incoming.length > 0) {
-        incoming.forEach((p) => { p.isDummy = true })
+        incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
         gameState.players.push(...incoming)
-        console.log(`🤖 [ADD MOCK PLAYERS] 더미 참가자 ${incoming.length}명 추가됨 (현재 총 ${gameState.players.length}명)`)
       } else {
         const count = Math.min(100, Math.max(1, Number(data?.count) || 10))
         const existing = gameState.players.length
@@ -251,84 +481,17 @@ io.on('connection', (socket) => {
             id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
             nickname,
             status: 'alive',
+            isAlive: true,
             joinedAt: Date.now() + i,
             isDummy: true,
           })
         }
         gameState.players.push(...newDummies)
-        console.log(`🤖 [ADD MOCK PLAYERS] 더미 참가자 ${count}명 추가됨 (현재 총 ${gameState.players.length}명)`)
       }
 
       broadcastState()
       if (callback) callback({ success: true, total: gameState.players.length })
     } catch (e) {
-      console.error('[admin:add_mock_players Error]', e)
-      if (callback) callback({ success: false, error: e.message })
-    }
-  })
-
-  // 관리자 게임 리셋 (접속자 유지 및 전원 생존 부활)
-  socket.on('admin:reset_game_keep_players', (callback) => {
-    try {
-      console.log('🔄 [ADMIN ACTION] 게임 리셋 (참가자 유지 & 전원 생존 부활)')
-      gameState.phase = 'lobby'
-      gameState.roundNumber = 0
-      gameState.currentQuestion = null
-      gameState.currentResult = null
-      gameState.isFinals = false
-      gameState.isPaused = false
-      gameState.votingDeadline = null
-      gameState.timeLeft = 15
-      gameState.votes = {}
-      gameState.players = gameState.players.map((p) => ({
-        ...p,
-        status: 'alive',
-        eliminatedRound: undefined,
-      }))
-      broadcastState()
-      io.emit('game:set_reset')
-      if (callback) callback({ success: true, count: gameState.players.length })
-    } catch (e) {
-      console.error('[admin:reset_game_keep_players Error]', e)
-      if (callback) callback({ success: false, error: e.message })
-    }
-  })
-
-  // 관리자 참가자 명단 완전 비우기 (admin:clear_all_players)
-  socket.on('admin:clear_all_players', (callback) => {
-    try {
-      console.log('🗑️ [ADMIN ACTION] 참가자 명단 완전 비우기 실행')
-      gameState.players = []
-      gameState.votes = {}
-      broadcastState()
-      io.emit('game:reset')
-      if (callback) callback({ success: true })
-    } catch (e) {
-      console.error('[admin:clear_all_players Error]', e)
-      if (callback) callback({ success: false, error: e.message })
-    }
-  })
-
-  // 관리자 전체 게임 및 참가자 초기화 (admin:reset_all)
-  socket.on('admin:reset_all', (callback) => {
-    try {
-      console.log('🔄 [ADMIN ACTION] 게임 전체 및 참가자 초기화 실행')
-      gameState.phase = 'lobby'
-      gameState.roundNumber = 0
-      gameState.currentQuestion = null
-      gameState.currentResult = null
-      gameState.isFinals = false
-      gameState.isPaused = false
-      gameState.votingDeadline = null
-      gameState.timeLeft = 15
-      gameState.players = []
-      gameState.votes = {}
-      gameState.chatMessages = []
-      broadcastState()
-      io.emit('game:reset')
-      if (callback) callback({ success: true })
-    } catch (e) {
-      console.error('[admin:reset_all Error]', e)
       if (callback) callback({ success: false, error: e.message })
     }
   })
@@ -346,7 +509,8 @@ io.on('connection', (socket) => {
         }
         gameState.chatMessages.push(msg)
         if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
-        io.emit('chat:received', msg)
+        io.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+        io.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
       }
     } catch (e) {
       console.error('[chat:send Error]', e)
@@ -369,7 +533,7 @@ function getLocalNetworkIp() {
   return 'localhost'
 }
 
-// 5. REST API
+// 5. REST API (웹소켓 차단 방화벽 및 모바일 폴링 대비)
 app.get('/api/server-info', (req, res) => {
   res.json({
     localIp: getLocalNetworkIp(),
@@ -387,6 +551,46 @@ app.get('/api/game/state', (req, res) => {
   res.json(gameState)
 })
 
+app.post('/api/game/start', (req, res) => {
+  try {
+    const data = req.body || {}
+    gameState.roundNumber = 1
+    gameState.votes = {}
+    gameState.currentResult = null
+    gameState.isGameOver = false
+    gameState.soleWinnerId = null
+    gameState.isPaused = false
+    gameState.players.forEach((p) => {
+      p.status = 'alive'
+      p.isAlive = true
+      p.eliminatedRound = undefined
+    })
+    if (data.question) gameState.currentQuestion = data.question
+    if (data.ruleMode) gameState.ruleMode = data.ruleMode
+    const limit = Number(data.timeLimit) || gameState.timeLimit || 15
+    gameState.timeLimit = limit
+    if (data.autoStartVoting !== false) {
+      gameState.phase = 'voting'
+      gameState.votingDeadline = Date.now() + limit * 1000
+      gameState.timeLeft = limit
+    } else {
+      gameState.phase = 'question'
+      gameState.votingDeadline = null
+      gameState.timeLeft = limit
+    }
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+      roundNumber: 1,
+      question: gameState.currentQuestion,
+      timeLimit: gameState.timeLimit,
+      votingDeadline: gameState.votingDeadline,
+    })
+    res.json({ success: true, state: gameState })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 app.post('/api/game/sync', (req, res) => {
   try {
     applyAdminSync(req.body)
@@ -402,19 +606,11 @@ app.post('/api/game/vote', (req, res) => {
     if (!playerId || (choice !== 'A' && choice !== 'B')) {
       return res.status(400).json({ success: false, error: '잘못된 투표 요청입니다.' })
     }
-
     const player = gameState.players.find((p) => p.id === playerId)
-    if (player && player.status === 'eliminated') {
+    if (player && (player.status === 'eliminated' || player.isAlive === false)) {
       return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
     }
-
-    const allowedPhases = ['voting', 'question', 'revealing']
-    if (!allowedPhases.includes(gameState.phase)) {
-      return res.status(400).json({ success: false, error: '투표 진행 중이 아닙니다.' })
-    }
-
     gameState.votes[playerId] = choice
-    console.log(`🗳️ [HTTP VOTE] ${player ? player.nickname : playerId} -> [${choice}] (총 투표: ${Object.keys(gameState.votes).length}표)`)
     broadcastState()
     res.json({ success: true })
   } catch (e) {
@@ -426,25 +622,22 @@ app.post('/api/game/join', (req, res) => {
   try {
     const nickname = (req.body?.nickname || '').trim()
     const requestedId = req.body?.id
-
     if (!nickname) {
       return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
     }
-
     let player = gameState.players.find((p) => p.nickname === nickname)
     if (!player) {
       player = {
         id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
         nickname,
         status: 'alive',
+        isAlive: true,
         joinedAt: Date.now(),
       }
       gameState.players.push(player)
-      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
     } else if (requestedId && player.id !== requestedId) {
       player.id = requestedId
     }
-
     broadcastState()
     res.json({ success: true, player })
   } catch (e) {
@@ -460,32 +653,30 @@ app.post('/api/game/reset', (req, res) => {
       gameState.roundNumber = 0
       gameState.currentQuestion = null
       gameState.currentResult = null
-      gameState.isFinals = false
+      gameState.isGameOver = false
+      gameState.soleWinnerId = null
       gameState.isPaused = false
-      gameState.votingDeadline = null
-      gameState.timeLeft = 15
       gameState.votes = {}
-      gameState.players = gameState.players.map((p) => ({
-        ...p,
-        status: 'alive',
-        eliminatedRound: undefined,
-      }))
+      gameState.players.forEach((p) => {
+        p.status = 'alive'
+        p.isAlive = true
+        p.eliminatedRound = undefined
+      })
       broadcastState()
-      io.emit('game:set_reset')
+      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
     } else {
       gameState.phase = 'lobby'
       gameState.roundNumber = 0
       gameState.currentQuestion = null
       gameState.currentResult = null
-      gameState.isFinals = false
-      gameState.isPaused = false
-      gameState.votingDeadline = null
-      gameState.timeLeft = 15
+      gameState.isGameOver = false
+      gameState.soleWinnerId = null
       gameState.players = []
       gameState.votes = {}
-      gameState.chatMessages = []
       broadcastState()
-      io.emit('game:reset')
+      io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
+      io.to(SOCKET_ROOM_MAIN).emit('game:reset')
     }
     res.json({ success: true })
   } catch (e) {
@@ -495,7 +686,7 @@ app.post('/api/game/reset', (req, res) => {
 
 // SPA fallback 지원 (Express 5 호환)
 app.use((req, res, next) => {
-  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/socket.io')) {
+  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path === '/healthz' || req.path === '/health') {
     return next()
   }
   const indexPath = path.join(clientDistPath, 'index.html')
@@ -506,12 +697,11 @@ app.use((req, res, next) => {
   }
 })
 
-// 6. 고가용성 자동 재연결 터널 매니저 (serveo.net 기반 - 로컬 개발 전용)
+// 6. 로컬 터널 매니저 (serveo.net 기반 - 로컬 개발 전용)
+let reconnectDelay = 5000
+
 function connectTunnel(targetPort) {
-  if (isRender) {
-    console.log(`☁️ [RENDER DEPLOYMENT] 클라우드 환경에서는 자체 배포 도메인을 사용합니다: ${publicTunnelUrl || 'Render Host'}`)
-    return
-  }
+  if (isProduction) return
   if (isReconnectingTunnel) return
   isReconnectingTunnel = true
 
@@ -522,7 +712,7 @@ function connectTunnel(targetPort) {
     sshProcess = null
   }
 
-  console.log('🔄 [터널 연결 및 복구 시도 중...]')
+  console.log('🔄 [로컬 터널 연결 및 복구 시도 중...]')
   try {
     const child = spawn('ssh', [
       '-o', 'StrictHostKeyChecking=no',
@@ -549,7 +739,7 @@ function connectTunnel(targetPort) {
           console.log(`👉 ${publicTunnelUrl}`)
           console.log(`=======================================================`)
           try {
-            io.emit('server:tunnel_updated', publicTunnelUrl)
+            io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
           } catch {}
         }
       }
@@ -564,7 +754,6 @@ function connectTunnel(targetPort) {
     })
 
     child.on('close', (code) => {
-      console.warn(`⚠️ [터널 연결 닫힘 (code: ${code})] 3초 후 자동 재접속합니다...`)
       scheduleTunnelReconnect(targetPort)
     })
 
@@ -572,15 +761,12 @@ function connectTunnel(targetPort) {
       isReconnectingTunnel = false
     }, 10000)
   } catch (err) {
-    console.error('터널 프로세스 생성 실패:', err.message)
     scheduleTunnelReconnect(targetPort)
   }
 }
 
-let reconnectDelay = 5000
-
 function scheduleTunnelReconnect(targetPort) {
-  if (isRender) return
+  if (isProduction) return
   sshProcess = null
   isReconnectingTunnel = false
   setTimeout(() => {
@@ -589,11 +775,9 @@ function scheduleTunnelReconnect(targetPort) {
   reconnectDelay = Math.min(30000, reconnectDelay + 5000)
 }
 
-// 30초 주기 터널 헬스체크 데몬 (로컬 전용)
-if (!isRender) {
+if (!isProduction) {
   setInterval(() => {
     if (!sshProcess || sshProcess.killed) {
-      console.log('🔍 [헬스체크] 터널 프로세스 재기동 필요 감지')
       connectTunnel(Number(port))
     }
   }, 30000)
@@ -609,17 +793,16 @@ process.on('SIGINT', () => {
 httpServer.listen(Number(port), '0.0.0.0', () => {
   const localIp = getLocalNetworkIp()
   console.log(`=======================================================`)
-  console.log(`🚀 [YOUR CHOICE - 당신의 선택 고성능 웹소켓 서버 가동]`)
+  console.log(`🚀 [YOUR CHOICE - 당신의 선택 (3번 서바이벌 퀴즈 아키텍처 이식 가동)]`)
   console.log(`🖥️ 대형 TV 화면:    http://localhost:${port}/tv`)
   console.log(`🛠️ 관리자 대시보드:  http://localhost:${port}/admin`)
   console.log(`📱 스마트폰 (사내 Wi-Fi): http://${localIp}:${port}/`)
-  if (isRender) {
-    console.log(`☁️ RENDER 클라우드 배포 모드 가동 중`)
+  if (isProduction) {
+    console.log(`☁️ RENDER 클라우드 프로덕션 배포 모드 가동`)
     if (publicTunnelUrl) {
-      console.log(`👉 배포 주소: ${publicTunnelUrl}`)
+      console.log(`👉 서비스 공인 URL: ${publicTunnelUrl}`)
     }
   } else {
-    console.log(`⏳ 외부 접속(LTE/5G)용 자동 복구 HTTPS 터널 시작 중...`)
     connectTunnel(Number(port))
   }
   console.log(`=======================================================`)

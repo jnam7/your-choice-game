@@ -389,6 +389,26 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         soleWinnerId: null,
       })
       get().showQuestion()
+
+      const state = get()
+      // 3번 서바이벌 퀴즈 규격: admin:start_game 서버 이벤트 전송
+      socket.emit('admin:start_game', {
+        autoStartVoting,
+        ruleMode: state.ruleMode,
+        timeLimit: state.timeLimit || 15,
+        question: state.currentQuestion,
+      })
+      fetch('/api/game/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          autoStartVoting,
+          ruleMode: state.ruleMode,
+          timeLimit: state.timeLimit || 15,
+          question: state.currentQuestion,
+        }),
+      }).catch(() => {})
+
       if (autoStartVoting) {
         get().startVoting()
       } else {
@@ -449,6 +469,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       })
       persist()
 
+      // 3번 서바이벌 퀴즈 규격 이벤트 전송
+      socket.emit('admin:start_voting', { timeLimit: limit })
+
       // 생존해 있는 더미 참가자 자동 무작위 투표 시뮬레이션 가동
       get().simulateDummyVotes()
     },
@@ -477,7 +500,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       if (get().phase !== 'voting' && get().phase !== 'question') return
       if (get().isPaused) return
 
-      // 웹소켓으로 투표 전송
+      // 웹소켓으로 투표 전송 (3번 서바이벌 퀴즈 호환)
       socket.emit('player:vote', { playerId, choice }, (res: any) => {
         if (!res?.success) {
           console.warn('[player:vote 서버 응답]', res?.error)
@@ -502,6 +525,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       clearDummyVoteTimers()
       set({ isPaused: true })
       persist()
+      socket.emit('admin:pause_game')
     },
 
     resumeGame: () => {
@@ -509,10 +533,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const newDeadline = Date.now() + timeLeft * 1000
       set({ isPaused: false, votingDeadline: newDeadline })
       persist()
+      socket.emit('admin:resume_game')
     },
 
     endVoting: () => {
       clearDummyVoteTimers()
+      socket.emit('admin:end_voting')
       // 투표 마감 -> 결과 공개 3초 카운트다운 진입
       get().startRevealing()
     },
@@ -669,6 +695,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           soleWinnerId: alive.length === 1 ? alive[0].id : null,
         })
         persist()
+        socket.emit('admin:sync', { phase: 'gameover', isGameOver: true, soleWinnerId: alive.length === 1 ? alive[0].id : null })
         return
       }
 
@@ -678,6 +705,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         currentResult: null,
       }))
       get().showQuestion()
+      const nextQ = get().currentQuestion
+
+      // 3번 서바이벌 퀴즈 규격 이벤트 전송
+      socket.emit('admin:next_round', { timeLimit: timeLimit || 15, question: nextQ })
+
       // 다음 라운드 진입 시 즉시 15초 투표 자동 시작
       get().startVoting(timeLimit || 15)
     },

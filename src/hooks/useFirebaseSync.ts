@@ -8,7 +8,7 @@ export function useFirebaseSync() {
   const lastSyncHashRef = useRef<string>('')
 
   useEffect(() => {
-    // 1. 소켓 연결 확인
+    // 1. 소켓 연결 확인 (3번 서바이벌 퀴즈 규격)
     if (!socket.connected) {
       socket.connect()
     }
@@ -25,7 +25,6 @@ export function useFirebaseSync() {
       // 상태 변경 감지 해시
       const hash = `${serverState.phase}_${serverState.roundNumber}_${serverState.votingDeadline}_${Object.keys(serverState.votes || {}).length}_${serverState.players?.length}_${Boolean(serverState.currentResult)}`
       if (lastSyncHashRef.current === hash && serverState.phase !== 'voting') {
-        // 이미 반영된 동일 상태면 재처리 생략 (voting 카운트다운 제외)
         return
       }
       lastSyncHashRef.current = hash
@@ -50,22 +49,49 @@ export function useFirebaseSync() {
       })
     }
 
-    // 2. 실시간 웹소켓 이벤트 수신
+    // 2. 3번 서바이벌 퀴즈 규격 이벤트 리스너 (game:state_sync & state:sync)
     const handleStateSync = (serverState: any) => {
       applyState(serverState)
     }
 
-    // 3. 외부 터널 URL 실시간 갱신 수신
+    const handleRoundStarted = (data: any) => {
+      if (data) {
+        syncWithServer({
+          phase: 'voting',
+          roundNumber: data.roundNumber || 1,
+          currentQuestion: data.question,
+          timeLimit: data.timeLimit || 15,
+          votingDeadline: data.votingDeadline,
+          timeLeft: data.timeLimit || 15,
+        })
+      }
+    }
+
+    const handleForceLobby = () => {
+      syncWithServer({
+        phase: 'lobby',
+        roundNumber: 0,
+        currentQuestion: null,
+        currentResult: null,
+        votes: {},
+      })
+    }
+
     const handleTunnelUpdated = (newTunnelUrl: string) => {
       if (newTunnelUrl && newTunnelUrl.startsWith('http')) {
         setServerHostUrl(newTunnelUrl)
       }
     }
 
+    // 3번 프로젝트의 핵심 이벤트 등록
+    socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
+    socket.on('game:round_started', handleRoundStarted)
+    socket.on('game:force_lobby', handleForceLobby)
+    socket.on('game:set_reset', handleForceLobby)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
 
-    // 4. HTTP Polling Fallback (웹소켓 연결 지연이나 모바일 프록시 차단 방어)
+    // 3. HTTP Polling Fallback (초기 진입 즉시 1회 Fetch 및 백업)
     const fetchLatestState = async () => {
       try {
         const res = await fetch('/api/game/state')
@@ -73,15 +99,10 @@ export function useFirebaseSync() {
           const data = await res.json()
           applyState(data)
         }
-      } catch (e) {
-        // 네트워크 일시 오류 무시
-      }
+      } catch (e) {}
     }
-
-    // 마운트 시 즉시 1회 fetch로 초기 상태 즉각 동기화
     fetchLatestState()
 
-    // 1초 주기로 백업 폴링 (소켓 미연결 시 즉시 상태 복구)
     const pollInterval = setInterval(() => {
       if (!socket.connected) {
         fetchLatestState()
@@ -89,7 +110,11 @@ export function useFirebaseSync() {
     }, 1000)
 
     return () => {
+      socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
+      socket.off('game:round_started', handleRoundStarted)
+      socket.off('game:force_lobby', handleForceLobby)
+      socket.off('game:set_reset', handleForceLobby)
       socket.off('server:tunnel_updated', handleTunnelUpdated)
       clearInterval(pollInterval)
     }

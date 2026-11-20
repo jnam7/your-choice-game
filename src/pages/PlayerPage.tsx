@@ -1039,10 +1039,14 @@ export default function PlayerPage() {
     }
 
     socket.on('game:set_reset', handleSetReset)
+    socket.on('game:force_lobby', handleSetReset)
     socket.on('game:reset', handleGameReset)
+    socket.on('game:player_kicked_all', handleGameReset)
     return () => {
       socket.off('game:set_reset', handleSetReset)
+      socket.off('game:force_lobby', handleSetReset)
       socket.off('game:reset', handleGameReset)
+      socket.off('game:player_kicked_all', handleGameReset)
     }
   }, [setCurrentPlayer])
 
