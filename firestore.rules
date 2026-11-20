@@ -1,0 +1,144 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== 헬퍼 함수 =====
+
+    // 인증된 사용자 여부
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // 관리자 여부 (커스텀 클레임 또는 관리자 메타데이터 확인)
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 본인 확인
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 현재 게임 상태 조회
+    function getGameState() {
+      return get(/databases/$(database)/documents/game/current).data;
+    }
+
+    // 현재 라운드 정보 조회
+    function getRoundData(roundId) {
+      return get(/databases/$(database)/documents/rounds/$(roundId)).data;
+    }
+
+    // 플레이어 정보 조회
+    function getPlayerData(playerId) {
+      return get(/databases/$(database)/documents/players/$(playerId)).data;
+    }
+
+    // 플레이어가 현재 생존 상태인지 확인
+    function isPlayerAlive(playerId) {
+      return getPlayerData(playerId).status == 'alive';
+    }
+
+    // ===== 1. 관리자 권한 컬렉션 =====
+    match /admins/{adminId} {
+      // 관리자 권한 목록은 관리자만 읽고 쓸 수 있음
+      allow read: if isAdmin();
+      allow write: if false; // 관리자 등록은 Firebase Admin SDK(서버)에서만 수행
+    }
+
+    // ===== 2. 게임 메인 상태 (`/game/current`) =====
+    match /game/current {
+      // 모든 인증된 사용자(참가자, TV, 관리자)가 실시간 게임 상태를 읽을 수 있음
+      allow read: if isAuthenticated();
+      // 게임 상태 변경(시작, 투표 시작, 결과 발표 등)은 관리자만 직접 가능하며,
+      // 생존/탈락 판정 및 주요 상태 전이는 서버(Cloud Functions)에서 수행
+      allow write: if isAdmin();
+    }
+
+    // ===== 3. 참가자 컬렉션 (`/players/{playerId}`) =====
+    match /players/{playerId} {
+      // 참가자 목록은 인증된 누구나(TV, 관리자, 참가자) 읽을 수 있음 (생존자 수, 닉네임 목록 등)
+      allow read: if isAuthenticated();
+
+      // 최초 참가 등록:
+      // - 반드시 본인의 uid로만 생성 가능
+      // - 초기 상태는 반드시 'alive'이어야 함
+      // - 닉네임은 1~10자 이내 문자열
+      allow create: if isOwner(playerId)
+        && request.resource.data.id == playerId
+        && request.resource.data.status == 'alive'
+        && request.resource.data.nickname is string
+        && request.resource.data.nickname.size() >= 1
+        && request.resource.data.nickname.size() <= 10;
+
+      // 생존자/탈락자 판정 및 정보 변경:
+      // - 일반 참가자는 자신의 생존 상태(status)를 절대 수정할 수 없음!
+      // - 서버(Admin SDK) 또는 관리자만 수정 가능
+      allow update: if isAdmin();
+
+      // 삭제는 관리자만 가능 (게임 초기화 시)
+      allow delete: if isAdmin();
+    }
+
+    // ===== 4. 닉네임 중복 방지 잠금 컬렉션 (`/nicknames/{nicknameLower}`) =====
+    match /nicknames/{nicknameLower} {
+      allow read: if isAuthenticated();
+      // 중복이 없을 때만 생성 가능 (본인 소유로 등록)
+      allow create: if isAuthenticated()
+        && request.resource.data.uid == request.auth.uid
+        && !exists(/databases/$(database)/documents/nicknames/$(nicknameLower));
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ===== 5. 라운드 정보 (`/rounds/{roundId}`) =====
+    match /rounds/{roundId} {
+      // 라운드 정보(문제, 진행 시간, 결과 요약)는 누구나 읽을 수 있음
+      allow read: if isAuthenticated();
+      // 라운드 생성 및 상태 수정은 관리자/서버 전용
+      allow write: if isAdmin();
+
+      // ===== 6. 라운드별 투표 컬렉션 (`/rounds/{roundId}/votes/{voterId}`) =====
+      match /votes/{voterId} {
+        // [보안 핵심 1] 타인의 투표 내용 실시간 열람 절대 방지!
+        // - 본인은 언제나 자신의 투표 확인 가능
+        // - 관리자는 모니터링 가능
+        // - 일반 참가자는 라운드 결과가 완전히 공개(revealed)되기 전까지 타인의 투표 문서를 절대 읽을 수 없음
+        allow read: if isOwner(voterId)
+          || isAdmin()
+          || (isAuthenticated() && getRoundData(roundId).phase == 'revealed');
+
+        // [보안 핵심 2] 참가자 투표 조작 및 중복/마감 후 투표 차단:
+        // - 반드시 본인의 uid로만 투표 생성 가능
+        // - 해당 라운드에 아직 투표한 적이 없어야 함 (중복 투표 방지)
+        // - 플레이어가 'alive' 상태여야 함 (탈락자 재투표 차단)
+        // - 현재 게임 페이즈가 'voting'이어야 함
+        // - 투표 마감 시간(deadline) 이전이어야 함 (마감 후 투표 차단)
+        // - 선택지는 'A' 또는 'B'만 가능
+        allow create: if isOwner(voterId)
+          && isPlayerAlive(voterId)
+          && getRoundData(roundId).phase == 'voting'
+          && request.time < getRoundData(roundId).deadline
+          && (request.resource.data.choice == 'A' || request.resource.data.choice == 'B')
+          && request.resource.data.playerId == voterId;
+
+        // [보안 핵심 3] 이미 제출한 투표는 변경 불가 (단일 투표 원칙)
+        allow update: if false;
+
+        // 투표 삭제는 관리자(초기화)만 가능
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ===== 7. 라운드 결과 히스토리 (`/results/{roundId}`) =====
+    match /results/{roundId} {
+      allow read: if isAuthenticated();
+      // 서버 또는 관리자만 결과 작성 가능
+      allow write: if isAdmin();
+    }
+  }
+}
