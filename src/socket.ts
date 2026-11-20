@@ -4,10 +4,14 @@ const SERVER_URL = typeof window !== 'undefined' ? window.location.origin : 'htt
 
 export const socket = io(SERVER_URL, {
   autoConnect: true,
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 500,
-  reconnectionDelayMax: 3000,
-  timeout: 30000,
+  reconnectionDelayMax: 2000,
+  timeout: 20000,
 })
+
+export function isSocketConnected(): boolean {
+  return Boolean(socket && socket.connected)
+}

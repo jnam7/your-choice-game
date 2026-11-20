@@ -21,7 +21,8 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express()
 const port = process.env.PORT || 5000
-let publicTunnelUrl = ''
+const isRender = Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_URL)
+let publicTunnelUrl = process.env.RENDER_EXTERNAL_URL || ''
 let sshProcess = null
 let isReconnectingTunnel = false
 
@@ -67,6 +68,42 @@ const gameState = {
 
 function broadcastState() {
   io.emit('state:sync', gameState)
+}
+
+function applyAdminSync(updates) {
+  if (updates && typeof updates === 'object') {
+    const { players: incomingPlayers, ...safeUpdates } = updates
+    Object.assign(gameState, safeUpdates)
+
+    // 1. 관리자 store의 각 플레이어 status ('alive' | 'eliminated')를 서버 players에 안전하게 반영
+    if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
+      const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
+      for (const p of gameState.players) {
+        if (statusMap.has(p.id)) {
+          p.status = statusMap.get(p.id)
+        }
+      }
+    }
+
+    // 2. 탈락자 명단이 포함되어 있으면 서버 참가자 상태(status: eliminated) 안전하게 반영
+    if (updates.currentResult?.eliminated && Array.isArray(updates.currentResult.eliminated)) {
+      const elimSet = new Set(updates.currentResult.eliminated)
+      for (const p of gameState.players) {
+        if (elimSet.has(p.id)) {
+          p.status = 'eliminated'
+          p.eliminatedRound = updates.roundNumber
+        }
+      }
+    }
+
+    // 라운드 결과 객체 보존
+    if (updates.currentResult) {
+      gameState.currentResult = updates.currentResult
+    }
+
+    console.log(`🔄 [STATE SYNC] Phase: ${gameState.phase}, Round: ${gameState.roundNumber}, Result: ${gameState.currentResult ? '있음' : '없음'}`)
+    broadcastState()
+  }
 }
 
 // 3. Socket.io 실시간 이벤트 핸들러
@@ -163,7 +200,7 @@ io.on('connection', (socket) => {
         return
       }
 
-      // 투표 허용 단계 확인 (voting, question, 직후 서스펜스 버퍼)
+      // 투표 허용 단계 확인 (voting, question, revealing 버퍼)
       const allowedPhases = ['voting', 'question', 'revealing']
       if (!allowedPhases.includes(gameState.phase)) {
         if (callback) callback({ success: false, error: '투표 진행 중이 아닙니다.' })
@@ -180,43 +217,10 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 관리자 상태 동기화 (admin:sync) - players 덮어쓰기 방어
+  // 관리자 상태 동기화 (admin:sync)
   socket.on('admin:sync', (updates) => {
     try {
-      if (updates && typeof updates === 'object') {
-        // 참가자 목록(players)은 통째로 삭제하지 않고, 관리자가 보낸 생존/탈락 상태(status)만 안전하게 반영
-        const { players: incomingPlayers, ...safeUpdates } = updates
-        Object.assign(gameState, safeUpdates)
-
-        // 1. 관리자 store의 각 플레이어 status ('alive' | 'eliminated')를 서버 players에 정확히 반영
-        if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
-          const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
-          for (const p of gameState.players) {
-            if (statusMap.has(p.id)) {
-              p.status = statusMap.get(p.id)
-            }
-          }
-        }
-
-        // 2. 탈락자 명단이 포함되어 있으면 서버 참가자 상태(status: eliminated) 안전하게 반영
-        if (updates.currentResult?.eliminated && Array.isArray(updates.currentResult.eliminated)) {
-          const elimSet = new Set(updates.currentResult.eliminated)
-          for (const p of gameState.players) {
-            if (elimSet.has(p.id)) {
-              p.status = 'eliminated'
-              p.eliminatedRound = updates.roundNumber
-            }
-          }
-        }
-
-        // 라운드 결과 객체 보존
-        if (updates.currentResult) {
-          gameState.currentResult = updates.currentResult
-        }
-
-        console.log(`🔄 [ADMIN SYNC] Phase: ${gameState.phase}, Round: ${gameState.roundNumber}, Result: ${gameState.currentResult ? '있음' : '없음'}`)
-        broadcastState()
-      }
+      applyAdminSync(updates)
     } catch (e) {
       console.error('[admin:sync Error]', e)
     }
@@ -276,7 +280,6 @@ io.on('connection', (socket) => {
       gameState.votingDeadline = null
       gameState.timeLeft = 15
       gameState.votes = {}
-      // 접속자 전원 유지 및 생존('alive')으로 부활
       gameState.players = gameState.players.map((p) => ({
         ...p,
         status: 'alive',
@@ -380,6 +383,116 @@ app.get('/api/state', (req, res) => {
   res.json(gameState)
 })
 
+app.get('/api/game/state', (req, res) => {
+  res.json(gameState)
+})
+
+app.post('/api/game/sync', (req, res) => {
+  try {
+    applyAdminSync(req.body)
+    res.json({ success: true, state: gameState })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/vote', (req, res) => {
+  try {
+    const { playerId, choice } = req.body || {}
+    if (!playerId || (choice !== 'A' && choice !== 'B')) {
+      return res.status(400).json({ success: false, error: '잘못된 투표 요청입니다.' })
+    }
+
+    const player = gameState.players.find((p) => p.id === playerId)
+    if (player && player.status === 'eliminated') {
+      return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
+    }
+
+    const allowedPhases = ['voting', 'question', 'revealing']
+    if (!allowedPhases.includes(gameState.phase)) {
+      return res.status(400).json({ success: false, error: '투표 진행 중이 아닙니다.' })
+    }
+
+    gameState.votes[playerId] = choice
+    console.log(`🗳️ [HTTP VOTE] ${player ? player.nickname : playerId} -> [${choice}] (총 투표: ${Object.keys(gameState.votes).length}표)`)
+    broadcastState()
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/join', (req, res) => {
+  try {
+    const nickname = (req.body?.nickname || '').trim()
+    const requestedId = req.body?.id
+
+    if (!nickname) {
+      return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
+    }
+
+    let player = gameState.players.find((p) => p.nickname === nickname)
+    if (!player) {
+      player = {
+        id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+        nickname,
+        status: 'alive',
+        joinedAt: Date.now(),
+      }
+      gameState.players.push(player)
+      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+    } else if (requestedId && player.id !== requestedId) {
+      player.id = requestedId
+    }
+
+    broadcastState()
+    res.json({ success: true, player })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/reset', (req, res) => {
+  try {
+    const { keepPlayers } = req.body || {}
+    if (keepPlayers) {
+      gameState.phase = 'lobby'
+      gameState.roundNumber = 0
+      gameState.currentQuestion = null
+      gameState.currentResult = null
+      gameState.isFinals = false
+      gameState.isPaused = false
+      gameState.votingDeadline = null
+      gameState.timeLeft = 15
+      gameState.votes = {}
+      gameState.players = gameState.players.map((p) => ({
+        ...p,
+        status: 'alive',
+        eliminatedRound: undefined,
+      }))
+      broadcastState()
+      io.emit('game:set_reset')
+    } else {
+      gameState.phase = 'lobby'
+      gameState.roundNumber = 0
+      gameState.currentQuestion = null
+      gameState.currentResult = null
+      gameState.isFinals = false
+      gameState.isPaused = false
+      gameState.votingDeadline = null
+      gameState.timeLeft = 15
+      gameState.players = []
+      gameState.votes = {}
+      gameState.chatMessages = []
+      broadcastState()
+      io.emit('game:reset')
+    }
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 // SPA fallback 지원 (Express 5 호환)
 app.use((req, res, next) => {
   if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/socket.io')) {
@@ -393,8 +506,12 @@ app.use((req, res, next) => {
   }
 })
 
-// 6. 고가용성 자동 재연결 터널 매니저 (serveo.net 기반)
+// 6. 고가용성 자동 재연결 터널 매니저 (serveo.net 기반 - 로컬 개발 전용)
 function connectTunnel(targetPort) {
+  if (isRender) {
+    console.log(`☁️ [RENDER DEPLOYMENT] 클라우드 환경에서는 자체 배포 도메인을 사용합니다: ${publicTunnelUrl || 'Render Host'}`)
+    return
+  }
   if (isReconnectingTunnel) return
   isReconnectingTunnel = true
 
@@ -460,6 +577,7 @@ function connectTunnel(targetPort) {
 }
 
 function scheduleTunnelReconnect(targetPort) {
+  if (isRender) return
   sshProcess = null
   isReconnectingTunnel = false
   setTimeout(() => {
@@ -467,13 +585,15 @@ function scheduleTunnelReconnect(targetPort) {
   }, 3000)
 }
 
-// 30초 주기 터널 헬스체크 데몬
-setInterval(() => {
-  if (!sshProcess || sshProcess.killed) {
-    console.log('🔍 [헬스체크] 터널 프로세스 재기동 필요 감지')
-    connectTunnel(Number(port))
-  }
-}, 30000)
+// 30초 주기 터널 헬스체크 데몬 (로컬 전용)
+if (!isRender) {
+  setInterval(() => {
+    if (!sshProcess || sshProcess.killed) {
+      console.log('🔍 [헬스체크] 터널 프로세스 재기동 필요 감지')
+      connectTunnel(Number(port))
+    }
+  }, 30000)
+}
 
 process.on('SIGINT', () => {
   if (sshProcess) {
@@ -489,8 +609,14 @@ httpServer.listen(Number(port), '0.0.0.0', () => {
   console.log(`🖥️ 대형 TV 화면:    http://localhost:${port}/tv`)
   console.log(`🛠️ 관리자 대시보드:  http://localhost:${port}/admin`)
   console.log(`📱 스마트폰 (사내 Wi-Fi): http://${localIp}:${port}/`)
-  console.log(`⏳ 외부 접속(LTE/5G)용 자동 복구 HTTPS 터널 시작 중...`)
+  if (isRender) {
+    console.log(`☁️ RENDER 클라우드 배포 모드 가동 중`)
+    if (publicTunnelUrl) {
+      console.log(`👉 배포 주소: ${publicTunnelUrl}`)
+    }
+  } else {
+    console.log(`⏳ 외부 접속(LTE/5G)용 자동 복구 HTTPS 터널 시작 중...`)
+    connectTunnel(Number(port))
+  }
   console.log(`=======================================================`)
-
-  connectTunnel(Number(port))
 })

@@ -145,8 +145,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
 
-      // 관리자 화면 또는 TV 화면에서 상태 변경 시 웹소켓으로 전체 브로드캐스트 즉시 전송
-      if (typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))) {
+      // 관리자 화면 또는 TV 화면에서 상태 변경 시 웹소켓 + HTTP 즉시 동기화
+      if (typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv') || window.location.pathname === '/')) {
         const syncPayload = {
           phase: state.phase,
           roundNumber: state.roundNumber,
@@ -166,6 +166,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           players: state.players.map((p) => ({ id: p.id, status: p.status, nickname: p.nickname })),
         }
         socket.emit('admin:sync', syncPayload)
+
+        // 관리자 또는 TV 콘솔인 경우 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
+        if (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv')) {
+          fetch('/api/game/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(syncPayload),
+          }).catch(() => {})
+        }
       }
     } catch (e) {
       // 쿼터 에러 등 방지
@@ -297,6 +306,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           localStorage.setItem('lasttwo_player_id', response.player.id)
         }
       })
+
+      // 백업 HTTP REST 참가 등록 (웹소켓 연결 지연 시 즉각 백업)
+      fetch('/api/game/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, nickname }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.player?.id && data.player.id !== id) {
+            set({ currentPlayerId: data.player.id })
+            localStorage.setItem('lasttwo_player_id', data.player.id)
+          }
+        })
+        .catch(() => {})
 
       return id
     },
@@ -459,6 +483,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           console.warn('[player:vote 서버 응답]', res?.error)
         }
       })
+
+      // 백업 HTTP REST 투표 전송 (소켓 불안정 대비)
+      fetch('/api/game/vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, choice }),
+      }).catch(() => {})
 
       set((state) => ({
         votes: { ...state.votes, [playerId]: choice },
@@ -725,14 +756,24 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         }))
       } catch (e) {}
 
-      // 서버에 "접속자 유지 리셋" 요청
+      // 서버에 "접속자 유지 리셋" 요청 (소켓 + HTTP)
       socket.emit('admin:reset_game_keep_players')
+      fetch('/api/game/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keepPlayers: true }),
+      }).catch(() => {})
     },
 
     clearAllPlayers: () => {
       clearDummyVoteTimers()
       set({ players: [] })
       socket.emit('admin:clear_all_players')
+      fetch('/api/game/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keepPlayers: false }),
+      }).catch(() => {})
     },
 
     decrementTimer: () => {
