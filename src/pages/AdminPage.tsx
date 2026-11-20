@@ -316,6 +316,20 @@ export default function AdminPage() {
             📊 엑셀 다운로드
           </button>
 
+          <a
+            href="/tv"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.preventDefault()
+              window.open('/tv', '_blank', 'noopener,noreferrer')
+            }}
+            className="px-3 py-1.5 bg-navy-dark/90 hover:bg-gold hover:text-navy-dark text-gold/90 border border-gold/30 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow transition-all cursor-pointer"
+            title="대형 TV 전광판 화면(/tv)을 새 탭/새 창에서 열기"
+          >
+            🖥️ TV 화면 열기
+          </a>
+
           <button
             onClick={() => {
               if (window.confirm('현재 게임을 초기화하고 다음 게임(세트)을 준비하시겠습니까?\n(접속한 참가자들은 튕기지 않고 유지되며, 전원 생존 상태로 대기실에 남아있습니다)')) {
