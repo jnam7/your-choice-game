@@ -165,6 +165,32 @@ function TVLobby() {
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
 
+  const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
+  const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)
+  const isPublicDomain = !isLocalhost && !isPrivateIp
+
+  // Wi-Fi 접속 URL: 로컬 사설망일 경우 로컬 IP 기반, Render 등 배포 도메인이면 실제 배포 originUrl
+  const wifiUrl = isPublicDomain
+    ? originUrl
+    : (!isLocalhost
+      ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
+      : `http://${localIp}:5000/`)
+
+  // LTE / 5G 어디서나 접속 URL:
+  // 1. 배포된 실제 브라우저 도메인이면 originUrl
+  // 2. SSH/ngrok 터널 URL이 수신되었으면 tunnelUrl
+  // 3. 관리자가 설정한 serverHostUrl이 있으면 serverHostUrl
+  // 4. 그 외 기본값으로 originUrl을 사용하여 절대 "준비중"이나 빈 주소가 되지 않도록 처리
+  const publicLteUrl = tunnelUrl
+    ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
+    : (isPublicDomain
+      ? originUrl
+      : (serverHostUrl && serverHostUrl.startsWith('http')
+        ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
+        : originUrl))
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     fetch('/api/server-info')
@@ -186,27 +212,18 @@ function TVLobby() {
     }
   }, [])
 
-  const wifiUrl = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-    ? `${window.location.protocol}//${window.location.hostname}:${window.location.port || '5000'}`
-    : `http://${localIp}:5000`
-
-  // 현재 모드 결정 (기본값: wifi)
-  const isTunnelMode = qrMode === 'tunnel' || (serverHostUrl && (serverHostUrl.includes('serveousercontent') || serverHostUrl.includes('lhr.life') || serverHostUrl.includes('ngrok')))
+  // 현재 모드 결정 (기본값: 배포 환경이면 tunnel, 로컬이면 저장된 모드 혹은 wifi)
+  const isTunnelMode = qrMode === 'tunnel' || (!qrMode && isPublicDomain) || (serverHostUrl && (serverHostUrl.includes('serveousercontent') || serverHostUrl.includes('lhr.life') || serverHostUrl.includes('ngrok') || serverHostUrl.includes('onrender.com')))
   const effectiveMode: 'wifi' | 'tunnel' = qrMode ? qrMode : (isTunnelMode ? 'tunnel' : 'wifi')
 
-  const activeJoinUrl = effectiveMode === 'tunnel' && (tunnelUrl || serverHostUrl)
-    ? (tunnelUrl || serverHostUrl)
-    : (effectiveMode === 'wifi' ? wifiUrl : (serverHostUrl || wifiUrl))
+  const activeJoinUrl = effectiveMode === 'tunnel' ? publicLteUrl : wifiUrl
 
   const handleSelectMode = (mode: 'wifi' | 'tunnel') => {
     setQrMode(mode)
     if (mode === 'wifi') {
       setServerHostUrl(wifiUrl)
     } else {
-      const target = tunnelUrl || serverHostUrl
-      if (target) {
-        setServerHostUrl(target)
-      }
+      setServerHostUrl(publicLteUrl)
     }
   }
 
@@ -259,14 +276,10 @@ function TVLobby() {
           }`}
         >
           <span>🌍 어디서나(LTE/5G)</span>
-          {tunnelUrl ? (
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-            </span>
-          ) : (
-            <span className="text-[10px] text-gray-400 font-mono">(준비중)</span>
-          )}
+          <span className="flex h-2.5 w-2.5 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+          </span>
         </button>
       </motion.div>
 
@@ -965,11 +978,23 @@ export default function TVPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return
 
+    const hostname = window.location.hostname
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
+    const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)
+    const isPublicDomain = !isLocalhost && !isPrivateIp
+
+    // Render 등 이미 배포된 퍼블릭 도메인이면 기본 origin을 세팅
+    if (isPublicDomain && (!serverHostUrl || serverHostUrl.includes('192.168.') || serverHostUrl.includes('localhost'))) {
+      setServerHostUrl(`${window.location.origin}/`)
+    }
+
     fetch('/api/server-info')
       .then((res) => (res.ok ? res.json() : null))
       .then((info) => {
         if (info?.publicUrl && qrMode === 'tunnel') {
           setServerHostUrl(info.publicUrl)
+        } else if (!info?.publicUrl && qrMode === 'tunnel' && isPublicDomain) {
+          setServerHostUrl(`${window.location.origin}/`)
         }
       })
       .catch(() => { })
@@ -984,7 +1009,7 @@ export default function TVPage() {
     return () => {
       socket.off('server:tunnel_updated', handleTunnelUpdated)
     }
-  }, [setServerHostUrl, qrMode])
+  }, [setServerHostUrl, qrMode, serverHostUrl])
 
   return (
     <div className="min-h-screen bg-navy text-white overflow-hidden relative select-none">

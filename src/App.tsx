@@ -7,6 +7,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PlayerPage />} />
+      <Route path="/player" element={<PlayerPage />} />
+      <Route path="/join" element={<PlayerPage />} />
       <Route path="/admin" element={<AdminPage />} />
       <Route path="/tv" element={<TVPage />} />
     </Routes>
