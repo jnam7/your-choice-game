@@ -1,5 +1,13 @@
 import { create } from 'zustand'
 import { socket } from '../socket'
+import {
+  writeFirebaseState,
+  writeFirebasePlayer,
+  writeAllFirebasePlayers,
+  clearFirebasePlayers,
+  submitFirebaseVote,
+  clearFirebaseVotes,
+} from '../firebase'
 import type { GameState, GameActions, GamePhase, Player, RoundResult, Question, ChatMessage, RuleMode, QrMode } from '../types/game'
 import {
   questions as defaultQuestions,
@@ -163,9 +171,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           votingDeadline: state.votingDeadline,
           timeLeft: state.timeLeft,
           votes: state.votes,
-          players: state.players.map((p) => ({ id: p.id, status: p.status, nickname: p.nickname })),
+          players: state.players.map((p) => ({
+            id: p.id,
+            status: p.status,
+            nickname: p.nickname,
+            joinedAt: p.joinedAt || Date.now(),
+            isDummy: Boolean(p.isDummy),
+          })),
         }
         socket.emit('admin:sync', syncPayload)
+        // Firebase Realtime DB에 즉시 직결 반영
+        writeFirebaseState(syncPayload).catch(() => {})
 
         // 관리자 또는 TV 콘솔인 경우 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
         if (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv')) {
@@ -280,15 +296,22 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     // ===== 플레이어 관리 =====
+    setPlayers: (players: Player[]) => {
+      set({ players })
+      persist()
+    },
+
     addPlayer: (nickname: string) => {
       const existing = get().players.find((p) => p.nickname === nickname)
       const id = existing ? existing.id : generateId()
+
+      const newPlayer: Player = { id, nickname, status: 'alive' as const, joinedAt: Date.now() }
 
       set((state) => {
         const alreadyInList = state.players.some((p) => p.id === id || p.nickname === nickname)
         const updatedList = alreadyInList
           ? state.players
-          : [...state.players, { id, nickname, status: 'alive' as const, joinedAt: Date.now() }]
+          : [...state.players, newPlayer]
         return {
           players: updatedList,
           currentPlayerId: id,
@@ -298,6 +321,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       localStorage.setItem('lasttwo_player_id', id)
       localStorage.setItem('lasttwo_player_nickname', nickname)
       persist()
+
+      // Firebase Realtime DB에 즉시 참가자 등록
+      writeFirebasePlayer(newPlayer).catch(() => {})
 
       // 서버에 클라이언트 ID와 함께 웹소켓 참가자 등록 요청
       socket.emit('player:join', { id, nickname }, (response: any) => {
@@ -365,10 +391,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         isAlive: true,
       }))
 
-      set((state) => ({
-        players: [...state.players, ...newPlayers],
-      }))
+      const allPlayers = [...get().players, ...newPlayers]
+      set({ players: allPlayers })
       persist()
+
+      // Firebase Realtime DB에 전체 플레이어 즉시 직결 반영
+      writeAllFirebasePlayers(allPlayers).catch(() => {})
 
       // 서버에 더미 참가자 즉시 등록 및 전파
       socket.emit('admin:add_mock_players', { newPlayers, count })
@@ -467,6 +495,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         isPaused: false,
         votes: {},
       })
+      clearFirebaseVotes().catch(() => {})
       persist()
 
       // 3번 서바이벌 퀴즈 규격 이벤트 전송
@@ -517,6 +546,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       set((state) => ({
         votes: { ...state.votes, [playerId]: choice },
       }))
+      submitFirebaseVote(playerId, choice).catch(() => {})
       persist()
     },
 
@@ -800,6 +830,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     clearAllPlayers: () => {
       clearDummyVoteTimers()
       set({ players: [] })
+      persist()
+      clearFirebasePlayers().catch(() => {})
+      writeFirebaseState({ players: [] }).catch(() => {})
       socket.emit('admin:clear_all_players')
       fetch('/api/game/reset', {
         method: 'POST',

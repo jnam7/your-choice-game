@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { socket } from '../socket'
+import { writeFirebasePlayer } from '../firebase'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
@@ -142,7 +143,10 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       }
       onJoin(newPlayer)
 
-      // 4. 백그라운드로 소켓 통신 전송 (네트워크 지연과 무관하게 비동기 동기화)
+      // 4. Firebase Realtime DB에 즉시 등록 (관리자/TV 참석 인원 실시간 연동)
+      writeFirebasePlayer(newPlayer).catch(() => {})
+
+      // 5. 백그라운드로 소켓 통신 전송 (네트워크 지연과 무관하게 비동기 동기화)
       socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
         if (res?.success && res?.player) {
           onJoin(res.player)
