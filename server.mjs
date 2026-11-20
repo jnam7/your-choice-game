@@ -540,6 +540,7 @@ function connectTunnel(targetPort) {
       const text = data.toString()
       const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.serveousercontent\.com/)
       if (match) {
+        reconnectDelay = 5000
         const newUrl = match[0]
         if (publicTunnelUrl !== newUrl) {
           publicTunnelUrl = newUrl
@@ -576,13 +577,16 @@ function connectTunnel(targetPort) {
   }
 }
 
+let reconnectDelay = 5000
+
 function scheduleTunnelReconnect(targetPort) {
   if (isRender) return
   sshProcess = null
   isReconnectingTunnel = false
   setTimeout(() => {
     connectTunnel(targetPort)
-  }, 3000)
+  }, reconnectDelay)
+  reconnectDelay = Math.min(30000, reconnectDelay + 5000)
 }
 
 // 30초 주기 터널 헬스체크 데몬 (로컬 전용)
