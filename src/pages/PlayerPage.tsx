@@ -93,22 +93,41 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       return
     }
 
-    setIsSubmitting(true)
-    const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-    const existing = players.find((p) => p.nickname === trimmed)
-    const localId = existing ? existing.id : (savedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)))
+    try {
+      setIsSubmitting(true)
+      const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+      const existing = players.find((p) => p.nickname === trimmed)
+      const localId = existing ? existing.id : (savedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)))
 
-    // 소켓으로 서버에 참가자 등록 요청 (3번 서바이벌 퀴즈 방식)
-    socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
-      setIsSubmitting(false)
-      if (res?.success && res?.player) {
-        onJoin(res.player)
-      } else {
-        const fallbackPlayer: Player = { id: localId, nickname: trimmed, status: 'alive', joinedAt: Date.now() }
-        addPlayer(trimmed)
-        onJoin(fallbackPlayer)
+      // 1. 로컬 스토리지에 즉시 저장
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('lasttwo_player_id', localId)
+        localStorage.setItem('lasttwo_player_nickname', trimmed)
       }
-    })
+
+      // 2. Zustand 스토어에 즉시 등록
+      addPlayer(trimmed)
+
+      // 3. 로컬 참가자 객체 생성 후 onJoin 즉시 호출하여 대기실(WaitingRoom) 화면으로 즉시 전환
+      const newPlayer: Player = {
+        id: localId,
+        nickname: trimmed,
+        status: 'alive',
+        joinedAt: Date.now(),
+      }
+      onJoin(newPlayer)
+
+      // 4. 백그라운드로 소켓 통신 전송 (네트워크 지연과 무관하게 비동기 동기화)
+      socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
+        if (res?.success && res?.player) {
+          onJoin(res.player)
+        }
+      })
+    } catch (err) {
+      console.error('[NicknameForm handleSubmit error]', err)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -940,7 +959,15 @@ export default function PlayerPage() {
   useFirebaseSync()
 
   const { phase, currentPlayerId, setCurrentPlayer, players } = useGameStore()
-  const [myPlayer, setMyPlayer] = useState<Player | null>(null)
+  const [myPlayer, setMyPlayer] = useState<Player | null>(() => {
+    if (typeof window === 'undefined') return null
+    const savedId = localStorage.getItem('lasttwo_player_id')
+    const savedNickname = localStorage.getItem('lasttwo_player_nickname')
+    if (savedId && savedNickname) {
+      return { id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() }
+    }
+    return null
+  })
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
