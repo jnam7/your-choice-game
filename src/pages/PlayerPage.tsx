@@ -148,6 +148,20 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
           onJoin(res.player)
         }
       })
+
+      // 5. REST API 백업 전송 (네트워크 지연/차단 시에도 서버 players 및 TV 화면에 100% 반영)
+      fetch('/api/game/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: localId, nickname: trimmed }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.player) {
+            onJoin(data.player)
+          }
+        })
+        .catch(() => {})
     } catch (err) {
       console.error('[NicknameForm handleSubmit error]', err)
     } finally {
@@ -225,7 +239,13 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
 }
 
 // ===== 대기실 =====
-function WaitingRoom({ onNicknameChange }: { onNicknameChange?: (newNick: string) => void }) {
+function WaitingRoom({
+  onNicknameChange,
+  onRejoin,
+}: {
+  onNicknameChange?: (newNick: string) => void
+  onRejoin?: () => void
+}) {
   const { players, currentPlayerId, phase, changeNickname } = useGameStore()
   const currentPlayer = players.find((p) => p.id === currentPlayerId)
   const [isEditing, setIsEditing] = useState(false)
@@ -322,7 +342,17 @@ function WaitingRoom({ onNicknameChange }: { onNicknameChange?: (newNick: string
                 ✏️ 수정
               </button>
             </div>
-            <p className="text-gray-400 mb-6 text-sm">참가 완료!</p>
+            <div className="flex flex-col items-center gap-2 mb-6">
+              <p className="text-gray-400 text-sm">참가 완료!</p>
+              <button
+                type="button"
+                onClick={onRejoin}
+                className="px-3.5 py-1.5 bg-navy-dark/90 hover:bg-gold/20 border border-gold/40 text-gold-light hover:text-gold text-xs rounded-xl font-bold transition-all inline-flex items-center gap-1.5 active:scale-95 shadow"
+                title="닉네임 변경 및 재입장 화면으로 돌아갑니다"
+              >
+                <span>🔄 닉네임 변경 / 재입장</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -984,11 +1014,23 @@ export default function PlayerPage() {
   useFirebaseSync()
 
   const { phase, currentPlayerId, setCurrentPlayer, players } = useGameStore()
+
+  // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
+  // 대기실(phase === 'lobby')인 경우, localStorage에 이전 데이터가 있더라도 무조건 닉네임 입력 화면(NicknameForm)을 먼저 거쳐야 함!
+  const [hasConfirmedJoin, setHasConfirmedJoin] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    const savedId = localStorage.getItem('lasttwo_player_id')
+    const savedNickname = localStorage.getItem('lasttwo_player_nickname')
+    // 게임이 이미 진행 중(phase !== 'lobby')인 경우에만 기존 플레이어 세션 자동 복원 허용
+    return Boolean(savedId && savedNickname && phase !== 'lobby')
+  })
+
   const [myPlayer, setMyPlayer] = useState<Player | null>(() => {
     if (typeof window === 'undefined') return null
     const savedId = localStorage.getItem('lasttwo_player_id')
     const savedNickname = localStorage.getItem('lasttwo_player_nickname')
-    if (savedId && savedNickname) {
+    // 게임이 이미 진행 중(phase !== 'lobby')인 경우에만 즉시 복원, 대기실에서는 사용자가 참가 버튼을 누를 때까지 null
+    if (savedId && savedNickname && phase !== 'lobby') {
       return { id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() }
     }
     return null
@@ -1009,12 +1051,13 @@ export default function PlayerPage() {
     }
   }, [])
 
-  // 1. 마운트 시 localStorage에 저장된 세션으로 자동 참가/복원 시도 및 관리자 초기화 수신
+  // 1. 게임 진행 중 재접속 시 자동 참가/복원 시도 및 관리자 초기화 수신
   useEffect(() => {
     const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
     const savedNickname = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
-    if (savedId && savedNickname) {
+    // 게임이 이미 진행 중(phase !== 'lobby')이고 저장된 세션이 있는 경우에만 백그라운드 재등록
+    if (savedId && savedNickname && phase !== 'lobby') {
       socket.emit('player:join', { id: savedId, nickname: savedNickname }, (res: any) => {
         if (res?.success && res?.player) {
           setMyPlayer(res.player)
@@ -1031,6 +1074,7 @@ export default function PlayerPage() {
     const handleGameReset = () => {
       // 참가자 완전 비우기 시에만 닉네임 입력 폼으로 초기화
       setMyPlayer(null)
+      setHasConfirmedJoin(false)
       setCurrentPlayer('')
       try {
         localStorage.removeItem('lasttwo_player_id')
@@ -1048,19 +1092,20 @@ export default function PlayerPage() {
       socket.off('game:reset', handleGameReset)
       socket.off('game:player_kicked_all', handleGameReset)
     }
-  }, [setCurrentPlayer])
+  }, [setCurrentPlayer, phase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
   const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId))
   const currentPlayer = foundInList || myPlayer
 
-  // 아직 참가하지 않은 경우
-  if (!currentPlayer) {
+  // 대기실 단계이거나 아직 이번 접속에서 '참가하기'를 누르지 않은 경우: 반드시 닉네임 입력 화면을 먼저 표시!
+  if (!hasConfirmedJoin || !currentPlayer) {
     return (
       <NicknameForm
         onJoin={(p) => {
           setMyPlayer(p)
           setCurrentPlayer(p.id)
+          setHasConfirmedJoin(true)
           localStorage.setItem('lasttwo_player_id', p.id)
           localStorage.setItem('lasttwo_player_nickname', p.nickname)
         }}
@@ -1106,12 +1151,15 @@ export default function PlayerPage() {
       return <EliminatedScreen />
     }
 
-    // 5. 대기실
+    // 5. 대기실 (닉네임 변경/재입장 버튼 지원)
     if (phase === 'lobby') {
       return (
         <WaitingRoom
           onNicknameChange={(newNick) => {
             if (myPlayer) setMyPlayer({ ...myPlayer, nickname: newNick })
+          }}
+          onRejoin={() => {
+            setHasConfirmedJoin(false)
           }}
         />
       )

@@ -151,7 +151,7 @@ io.on('connection', (socket) => {
         return
       }
 
-      let player = gameState.players.find((p) => p.nickname === nickname)
+      let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
       if (!player) {
         player = {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
@@ -162,9 +162,12 @@ io.on('connection', (socket) => {
         }
         gameState.players.push(player)
         console.log(`👤 [PLAYER JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
-      } else if (requestedId && player.id !== requestedId) {
-        player.id = requestedId
-        console.log(`🔄 [PLAYER RECONNECT] ${nickname} (ID: ${player.id})`)
+      } else {
+        if (requestedId) player.id = requestedId
+        player.nickname = nickname
+        player.status = 'alive'
+        player.isAlive = true
+        console.log(`🔄 [PLAYER RE-JOIN / UPDATE] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
       }
 
       broadcastState()
@@ -625,7 +628,7 @@ app.post('/api/game/join', (req, res) => {
     if (!nickname) {
       return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
     }
-    let player = gameState.players.find((p) => p.nickname === nickname)
+    let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
     if (!player) {
       player = {
         id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
@@ -635,8 +638,13 @@ app.post('/api/game/join', (req, res) => {
         joinedAt: Date.now(),
       }
       gameState.players.push(player)
-    } else if (requestedId && player.id !== requestedId) {
-      player.id = requestedId
+      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+    } else {
+      if (requestedId) player.id = requestedId
+      player.nickname = nickname
+      player.status = 'alive'
+      player.isAlive = true
+      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
     }
     broadcastState()
     res.json({ success: true, player })
