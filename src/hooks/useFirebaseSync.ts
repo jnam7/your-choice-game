@@ -21,7 +21,7 @@ export function useFirebaseSync() {
           calculatedTimeLeft = remainingSec
         }
 
-        const hash = `${serverState.phase}_${serverState.roundNumber}_${serverState.votingDeadline}_${Boolean(serverState.currentResult)}_${serverState.isPaused}`
+        const hash = `${serverState.phase}_${serverState.roundNumber}_${serverState.votingDeadline}_${Boolean(serverState.currentResult)}_${serverState.isPaused}_${serverState.currentQuestion?.id || ''}`
         if (lastSyncHashRef.current === hash && serverState.phase !== 'voting') {
           return
         }
@@ -134,10 +134,13 @@ export function useFirebaseSync() {
     socket.on('game:set_reset', handleForceLobby)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
 
-    // ===== 3. HTTP 백업 폴링 (초기 1회 및 주기적 안전장치) =====
+    // ===== 3. HTTP 백업 폴링 (초기 1회 및 주기적 1.5초 안전장치) =====
     const fetchLatestState = async () => {
       try {
-        const res = await fetch('/api/game/state')
+        let res = await fetch('/api/game/state')
+        if (!res.ok) {
+          res = await fetch('/api/state')
+        }
         if (res.ok) {
           const data = await res.json()
           applyState(data)
@@ -145,8 +148,10 @@ export function useFirebaseSync() {
       } catch (e) {}
     }
     fetchLatestState()
+    const pollInterval = setInterval(fetchLatestState, 1500)
 
     return () => {
+      clearInterval(pollInterval)
       unsubscribeFirebase()
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)

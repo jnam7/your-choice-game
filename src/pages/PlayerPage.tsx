@@ -498,12 +498,9 @@ function QuestionPreviewScreen({ currentPlayer }: { currentPlayer?: Player | nul
 
 // ===== 3. 투표 화면 =====
 function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
-  const { currentQuestion, submitVote, currentPlayerId, votes, isPaused, timeLeft, votingDeadline, timeLimit, roundNumber, ruleMode } = useGameStore()
+  const { currentQuestion, submitVote, currentPlayerId, votes, isPaused, timeLeft, votingDeadline, timeLimit, roundNumber, ruleMode, phase } = useGameStore()
   
-  // 1. 탈락자는 투표 화면 진입 원천 차단 (관전 화면으로 강제 전환)
-  if (currentPlayer && currentPlayer.status === 'eliminated') {
-    return <EliminatedScreen />
-  }
+  const isEliminated = currentPlayer?.status === 'eliminated'
 
   const effectiveId = currentPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') || '' : '')
   const myVote = (effectiveId && votes[effectiveId]) as 'A' | 'B' | undefined
@@ -538,8 +535,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   }, [votingDeadline, timeLeft])
 
   const handleVote = (choice: 'A' | 'B') => {
-    if (selected || myVote || !effectiveId || isPaused || remaining <= 0) return
-    if (currentPlayer?.status === 'eliminated') return
+    if (isEliminated || selected || myVote || !effectiveId || isPaused || remaining <= 0) return
 
     playClickSound()
     triggerVibration(50)
@@ -552,20 +548,51 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   const currentChoice = selected || myVote
   const alreadyVoted = Boolean(currentChoice)
 
-  if (!currentQuestion) return null
+  // 문제 정보가 아직 동기화 중일 때 빈 화면(null) 대신 로딩 UI 제공
+  if (!currentQuestion) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+        <div className="particles-bg" />
+        <div className="glass-card p-6 max-w-sm w-full">
+          <div className="text-4xl animate-bounce mb-3">❓</div>
+          <h3 className="font-display text-xl text-gold">문제를 준비하는 중...</h3>
+          <p className="text-gray-400 text-xs mt-1">잠시 후 라운드 문제가 시작됩니다</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen flex flex-col p-4 max-w-md mx-auto">
       <div className="particles-bg" />
 
-      {/* 상단: 카운트다운 */}
+      {/* 상단: 카운트다운 또는 MC 안내 뱃지 */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="text-center pt-2 pb-1"
       >
-        <CountdownCircle timeLeft={remaining} total={total} />
+        {phase === 'question' ? (
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-gold/15 border border-gold/40 text-gold font-bold text-sm shadow-lg mb-2">
+            <span className="text-xl animate-pulse">🎙️</span>
+            <span>MC가 문제를 안내하고 있습니다</span>
+          </div>
+        ) : (
+          <CountdownCircle timeLeft={remaining} total={total} />
+        )}
       </motion.div>
+
+      {/* 탈락자 관전 모드 안내 배너 */}
+      {isEliminated && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="mb-2 p-2.5 rounded-xl bg-red-950/80 border border-red-500/50 text-center text-xs text-red-200 font-bold shadow-lg flex items-center justify-center gap-2"
+        >
+          <span>💀</span>
+          <span>관전 모드: 탈락자는 투표할 수 없으며 TV 스크린을 함께 관전합니다</span>
+        </motion.div>
+      )}
 
       {/* 카테고리 및 룰 뱃지 */}
       <div className="text-center mb-3 space-y-1.5">
@@ -590,19 +617,21 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
       <div className="flex-1 flex flex-col gap-4 w-full justify-center">
         {/* A 버튼 */}
         <motion.button
-          whileHover={!alreadyVoted && remaining > 0 ? { scale: 1.02 } : {}}
-          whileTap={!alreadyVoted && remaining > 0 ? { scale: 0.98 } : {}}
+          whileHover={!isEliminated && !alreadyVoted && remaining > 0 ? { scale: 1.02 } : {}}
+          whileTap={!isEliminated && !alreadyVoted && remaining > 0 ? { scale: 0.98 } : {}}
           onClick={() => handleVote('A')}
-          disabled={alreadyVoted || remaining <= 0}
+          disabled={isEliminated || alreadyVoted || remaining <= 0}
           className={`relative w-full py-7 px-5 rounded-2xl font-display text-xl md:text-2xl
                       text-white text-center transition-all duration-300
-                      ${currentChoice === 'A'
-              ? 'btn-team-a ring-4 ring-white shadow-2xl shadow-team-a/60 scale-[1.02]'
-              : currentChoice === 'B'
-                ? 'bg-gray-800/60 opacity-40 grayscale'
-                : remaining <= 0
-                  ? 'bg-gray-850 opacity-40 cursor-not-allowed'
-                  : 'btn-team-a hover:shadow-lg'
+                      ${isEliminated
+              ? 'bg-gray-800/60 border-2 border-gray-600/40 opacity-60 cursor-not-allowed'
+              : currentChoice === 'A'
+                ? 'btn-team-a ring-4 ring-white shadow-2xl shadow-team-a/60 scale-[1.02]'
+                : currentChoice === 'B'
+                  ? 'bg-gray-800/60 opacity-40 grayscale'
+                  : remaining <= 0
+                    ? 'bg-gray-850 opacity-40 cursor-not-allowed'
+                    : 'btn-team-a hover:shadow-lg'
             }`}
         >
           <span className="absolute top-3 left-4 text-xs font-body opacity-80 font-bold">CHOICE A</span>
@@ -627,19 +656,21 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
 
         {/* B 버튼 */}
         <motion.button
-          whileHover={!alreadyVoted && remaining > 0 ? { scale: 1.02 } : {}}
-          whileTap={!alreadyVoted && remaining > 0 ? { scale: 0.98 } : {}}
+          whileHover={!isEliminated && !alreadyVoted && remaining > 0 ? { scale: 1.02 } : {}}
+          whileTap={!isEliminated && !alreadyVoted && remaining > 0 ? { scale: 0.98 } : {}}
           onClick={() => handleVote('B')}
-          disabled={alreadyVoted || remaining <= 0}
+          disabled={isEliminated || alreadyVoted || remaining <= 0}
           className={`relative w-full py-7 px-5 rounded-2xl font-display text-xl md:text-2xl
                       text-white text-center transition-all duration-300
-                      ${currentChoice === 'B'
-              ? 'btn-team-b ring-4 ring-white shadow-2xl shadow-team-b/60 scale-[1.02]'
-              : currentChoice === 'A'
-                ? 'bg-gray-800/60 opacity-40 grayscale'
-                : remaining <= 0
-                  ? 'bg-gray-850 opacity-40 cursor-not-allowed'
-                  : 'btn-team-b hover:shadow-lg'
+                      ${isEliminated
+              ? 'bg-gray-800/60 border-2 border-gray-600/40 opacity-60 cursor-not-allowed'
+              : currentChoice === 'B'
+                ? 'btn-team-b ring-4 ring-white shadow-2xl shadow-team-b/60 scale-[1.02]'
+                : currentChoice === 'A'
+                  ? 'bg-gray-800/60 opacity-40 grayscale'
+                  : remaining <= 0
+                    ? 'bg-gray-850 opacity-40 cursor-not-allowed'
+                    : 'btn-team-b hover:shadow-lg'
             }`}
         >
           <span className="absolute top-3 left-4 text-xs font-body opacity-80 font-bold">CHOICE B</span>
@@ -662,9 +693,17 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
         animate={{ opacity: 1 }}
         className="text-center py-4 text-sm"
       >
-        {alreadyVoted ? (
+        {isEliminated ? (
+          <span className="text-red-400 font-bold flex items-center justify-center gap-1.5">
+            💀 [관전 모드] 탈락자는 투표할 수 없습니다 (TV 스크린 관전)
+          </span>
+        ) : alreadyVoted ? (
           <span className="text-gold font-bold flex items-center justify-center gap-1.5 animate-pulse">
             ✅ [{currentChoice}] 투표 완료! 집계 결과를 기다리고 있습니다
+          </span>
+        ) : phase === 'question' ? (
+          <span className="text-gold-light font-bold">
+            💡 지금 바로 미리 선택하거나, TV 화면의 MC 안내를 경청하세요!
           </span>
         ) : (
           <span className="text-gray-300">
@@ -1014,31 +1053,44 @@ function WinnerScreen() {
 
 // ===== 메인 직원 페이지 =====
 export default function PlayerPage() {
-  // 실시간 웹소켓 상태 복원 동기화
+  // 실시간 웹소켓 및 Firebase 상태 동기화
   useFirebaseSync()
 
-  const { phase, currentPlayerId, setCurrentPlayer, players } = useGameStore()
+  // Zustand selector를 통한 실시간 반응성 보장 (phase 변경 시 즉각 리렌더링)
+  const phase = useGameStore((s) => s.phase)
+  const currentPlayerId = useGameStore((s) => s.currentPlayerId)
+  const setCurrentPlayer = useGameStore((s) => s.setCurrentPlayer)
+  const players = useGameStore((s) => s.players)
+
+  const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+  const savedNickname = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
   // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
-  // 대기실(phase === 'lobby')인 경우, localStorage에 이전 데이터가 있더라도 무조건 닉네임 입력 화면(NicknameForm)을 먼저 거쳐야 함!
+  // 대기실(phase === 'lobby')인 경우, localStorage에 이전 데이터가 있더라도 최초 닉네임 입력 화면을 거치도록 하되,
+  // 게임이 이미 진행 중(phase !== 'lobby')인 경우 기존 참가자 정보를 자동 복원
   const [hasConfirmedJoin, setHasConfirmedJoin] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
-    const savedId = localStorage.getItem('lasttwo_player_id')
-    const savedNickname = localStorage.getItem('lasttwo_player_nickname')
-    // 게임이 이미 진행 중(phase !== 'lobby')인 경우에만 기존 플레이어 세션 자동 복원 허용
     return Boolean(savedId && savedNickname && phase !== 'lobby')
   })
 
   const [myPlayer, setMyPlayer] = useState<Player | null>(() => {
     if (typeof window === 'undefined') return null
-    const savedId = localStorage.getItem('lasttwo_player_id')
-    const savedNickname = localStorage.getItem('lasttwo_player_nickname')
-    // 게임이 이미 진행 중(phase !== 'lobby')인 경우에만 즉시 복원, 대기실에서는 사용자가 참가 버튼을 누를 때까지 null
     if (savedId && savedNickname && phase !== 'lobby') {
       return { id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() }
     }
     return null
   })
+
+  // phase가 lobby가 아닐 때 저장된 정보가 있다면 즉시 참가 확정 및 세션 복구
+  useEffect(() => {
+    if (phase !== 'lobby' && savedId && savedNickname) {
+      if (!hasConfirmedJoin) setHasConfirmedJoin(true)
+      if (!myPlayer) {
+        setMyPlayer({ id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() })
+        setCurrentPlayer(savedId)
+      }
+    }
+  }, [phase, savedId, savedNickname, hasConfirmedJoin, myPlayer, setCurrentPlayer])
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
@@ -1057,12 +1109,12 @@ export default function PlayerPage() {
 
   // 1. 게임 진행 중 재접속 시 자동 참가/복원 시도 및 관리자 초기화 수신
   useEffect(() => {
-    const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-    const savedNickname = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+    const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+    const sNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
     // 게임이 이미 진행 중(phase !== 'lobby')이고 저장된 세션이 있는 경우에만 백그라운드 재등록
-    if (savedId && savedNickname && phase !== 'lobby') {
-      socket.emit('player:join', { id: savedId, nickname: savedNickname }, (res: any) => {
+    if (sId && sNick && phase !== 'lobby') {
+      socket.emit('player:join', { id: sId, nickname: sNick }, (res: any) => {
         if (res?.success && res?.player) {
           setMyPlayer(res.player)
           setCurrentPlayer(res.player.id)
@@ -1099,11 +1151,21 @@ export default function PlayerPage() {
   }, [setCurrentPlayer, phase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
-  const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId))
-  const currentPlayer = foundInList || myPlayer
+  const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId || savedId))
+  const currentPlayer: Player | null =
+    foundInList ||
+    myPlayer ||
+    (savedId && savedNickname
+      ? {
+          id: savedId,
+          nickname: savedNickname,
+          status: 'alive',
+          joinedAt: Date.now(),
+        }
+      : null)
 
-  // 대기실 단계이거나 아직 이번 접속에서 '참가하기'를 누르지 않은 경우: 반드시 닉네임 입력 화면을 먼저 표시!
-  if (!hasConfirmedJoin || !currentPlayer) {
+  // 대기실 단계이거나 아직 이번 접속에서 '참가하기'를 누르지 않은 경우 (단, 게임 진행 중이면 저장된 정보로 자동 진입)
+  if ((phase === 'lobby' && !hasConfirmedJoin) || !currentPlayer) {
     return (
       <NicknameForm
         onJoin={(p) => {
@@ -1118,12 +1180,20 @@ export default function PlayerPage() {
   }
 
   const renderScreen = () => {
-    // 1. 결과 발표 단계: 생존자/탈락자 모두 이번 라운드 투표 결과를 먼저 확인!
+    // 1. 게임 종료
+    if (phase === 'gameover') {
+      if (currentPlayer?.status === 'alive') {
+        return <WinnerScreen />
+      }
+      return <EliminatedScreen />
+    }
+
+    // 2. 결과 발표 단계: 생존자/탈락자 모두 이번 라운드 투표 결과를 먼저 확인!
     if (phase === 'result' || phase === 'elimination') {
       return <ResultScreen />
     }
 
-    // 2. 결과 집계 서스펜스 (3초)
+    // 3. 결과 집계 서스펜스 (3초)
     if (phase === 'revealing') {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
@@ -1142,20 +1212,18 @@ export default function PlayerPage() {
       )
     }
 
-    // 3. 탈락한 경우 (문제/투표 단계에서는 관전 화면)
-    if (currentPlayer.status === 'eliminated') {
-      return <EliminatedScreen />
+    // 4. 문제 출제 및 투표 단계 (TV 화면과 분기 조건 일치: question, voting, playing, finals 등)
+    // 참가자 상태(생존/탈락)와 상관없이 문제 선택지(A/B) 화면을 즉시 렌더링 (탈락자는 관전 모드로 표시)
+    if (
+      phase === 'question' ||
+      phase === 'voting' ||
+      (phase as string) === 'playing' ||
+      phase === 'finals'
+    ) {
+      return <VoteScreen currentPlayer={currentPlayer} />
     }
 
-    // 4. 게임 종료
-    if (phase === 'gameover') {
-      if (currentPlayer.status === 'alive') {
-        return <WinnerScreen />
-      }
-      return <EliminatedScreen />
-    }
-
-    // 5. 대기실 (닉네임 변경/재입장 버튼 지원)
+    // 5. 대기실 (오직 phase === 'lobby' 일 때만 표시)
     if (phase === 'lobby') {
       return (
         <WaitingRoom
@@ -1169,17 +1237,8 @@ export default function PlayerPage() {
       )
     }
 
-    // 6. 문제 출제 단계 (MC 읽기/대기)
-    if (phase === 'question') {
-      return <QuestionPreviewScreen currentPlayer={currentPlayer} />
-    }
-
-    // 7. 투표 진행 (15초 실시간 카운트다운)
-    if (phase === 'voting') {
-      return <VoteScreen currentPlayer={currentPlayer} />
-    }
-
-    return <WaitingRoom />
+    // 6. 기본 폴백: 대기실이 아닌 경우 무조건 문제 선택지 화면으로 폴백하여 대기실 갇힘 원천 방지
+    return <VoteScreen currentPlayer={currentPlayer} />
   }
 
   return (

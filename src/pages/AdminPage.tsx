@@ -490,25 +490,6 @@ export default function AdminPage() {
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button
                       onClick={() => {
-                        // 3번 서바이벌 퀴즈 동일 방식: admin:start_game 서버 이벤트 즉시 전송
-                        socket.emit('admin:start_game', {
-                          autoStartVoting: true,
-                          ruleMode,
-                          timeLimit: timeLimit || 15,
-                          question: currentQuestion,
-                        }, (res: any) => {
-                          console.log('🚀 [3번 서바이벌 퀴즈 규격] admin:start_game 응답:', res)
-                        })
-                        fetch('/api/game/start', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            autoStartVoting: true,
-                            ruleMode,
-                            timeLimit: timeLimit || 15,
-                            question: currentQuestion,
-                          }),
-                        }).catch(() => {})
                         startGame(true)
                       }}
                       disabled={alivePlayers.length < 1}
@@ -520,24 +501,6 @@ export default function AdminPage() {
                     </button>
                     <button
                       onClick={() => {
-                        socket.emit('admin:start_game', {
-                          autoStartVoting: false,
-                          ruleMode,
-                          timeLimit: timeLimit || 15,
-                          question: currentQuestion,
-                        }, (res: any) => {
-                          console.log('🚀 [3번 서바이벌 퀴즈 규격] admin:start_game 응답:', res)
-                        })
-                        fetch('/api/game/start', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            autoStartVoting: false,
-                            ruleMode,
-                            timeLimit: timeLimit || 15,
-                            question: currentQuestion,
-                          }),
-                        }).catch(() => {})
                         startGame(false)
                       }}
                       disabled={alivePlayers.length < 1}
