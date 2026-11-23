@@ -628,6 +628,46 @@ export function syncPlugin(): Plugin {
         if (callback) callback({ success: true })
       })
 
+      // 관리자 더미 참가자 추가
+      socket.on('admin:add_mock_players', (data, callback) => {
+        try {
+          const incoming = Array.isArray(data?.newPlayers) ? data.newPlayers : []
+          if (incoming.length > 0) {
+            incoming.forEach((p: any) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
+            gameState.players.push(...incoming)
+          } else {
+            const count = Math.min(100, Math.max(1, Number(data?.count) || 10))
+            const existing = gameState.players.length
+            const mockNames = [
+              '기획팀_김철수', '개발팀_이영희', '디자인_박민수', '마케팅_최지우', '인사팀_정우성',
+              '영업1팀_강동원', '재무팀_한지민', '품질관리_송중기', '보안팀_전지현', '총무팀_유재석',
+              '해외영업_이정재', '고객지원_박보영', '연구소_신하균', '전략팀_김혜수', '홍보팀_공유',
+              'IT지원_손예진', '신사업_조인성', '구매팀_차은우', '데이터팀_아이유', '비서실_원빈'
+            ]
+            const newDummies: any[] = []
+            for (let i = 0; i < count; i++) {
+              const idx = existing + i
+              const nickname = idx < mockNames.length ? mockNames[idx] : `더미참가자_${idx + 1}`
+              newDummies.push({
+                id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+                nickname,
+                status: 'alive',
+                isAlive: true,
+                joinedAt: Date.now() + i,
+                isDummy: true,
+              })
+            }
+            gameState.players.push(...newDummies)
+          }
+
+          broadcastState()
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:player_joined', { players: gameState.players, totalCount: gameState.players.length })
+          if (callback) callback({ success: true, total: gameState.players.length })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e?.message })
+        }
+      })
+
       socket.on('chat:send', (data) => {
         const { nickname, message } = data || {}
         if (nickname && message) {

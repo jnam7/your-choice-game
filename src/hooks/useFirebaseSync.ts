@@ -46,10 +46,20 @@ export function useFirebaseSync() {
         })
       },
       onPlayers: (playersList: Player[]) => {
-        // Firebase Realtime DB에서 수신한 진짜 참가자 목록을 100% 기준으로 동기화 (로컬 가짜 참가자 병합 제거)
         const validList = Array.isArray(playersList) ? playersList : []
+        const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+        const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+
+        let finalList = validList
+        if (mySavedId && mySavedNick && !validList.some((p) => p.id === mySavedId)) {
+          finalList = [
+            ...validList,
+            { id: mySavedId, nickname: mySavedNick, status: 'alive', joinedAt: Date.now() },
+          ]
+        }
+
         syncWithServer({
-          players: validList,
+          players: finalList,
         })
       },
       onVotes: (votesMap: Record<string, 'A' | 'B'>) => {

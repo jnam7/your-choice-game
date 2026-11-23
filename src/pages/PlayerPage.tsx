@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { socket } from '../socket'
-import { writeFirebasePlayer, removeFirebasePlayer } from '../firebase'
+import { writeFirebasePlayer, removeFirebasePlayer, rtdb, RTDB_PATHS } from '../firebase'
+import { ref, onValue, off } from 'firebase/database'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
@@ -100,10 +101,9 @@ function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
   const [nickname, setNickname] = useState('')
   const [error, setError] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const players = useGameStore((s) => s.players)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     unlockAudioContext()
     const trimmed = nickname.trim()
@@ -118,7 +118,6 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
     }
 
     try {
-      setIsSubmitting(true)
       setError('')
       const localId = 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)
 
@@ -129,26 +128,19 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         joinedAt: Date.now(),
       }
 
-      // 1. Firebase Realtime DB에 직접 set() 기록 (games/your-choice/players/${playerId})
-      try {
-        await writeFirebasePlayer(newPlayer)
-      } catch (fbErr: any) {
-        console.error('❌ [NicknameForm] Firebase 참가자 직접 등록 실패:', fbErr)
-        const errMsg = fbErr?.message || 'Firebase Realtime DB 연결 또는 쓰기 권한이 없습니다.'
-        setError(`참가 실패: ${errMsg}`)
-        alert(`[Firebase 등록 오류]\n데이터베이스에 참가자를 기록하지 못했습니다.\n\n오류: ${errMsg}\n\nFirebase 보안 규칙(.read, .write) 및 네트워크 상태를 확인해주세요.`)
-        setIsSubmitting(false)
-        return
-      }
-
-      // 2. Firebase 쓰기 성공 시 로컬 스토리지에 플레이어 식별 정보 저장
+      // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장
       if (typeof window !== 'undefined') {
         localStorage.setItem('lasttwo_player_id', localId)
         localStorage.setItem('lasttwo_player_nickname', trimmed)
       }
 
-      // 3. 로컬 상태에 플레이어를 임의로 추가(addPlayer)하지 않고, Firebase 실시간 DB 구독 목록을 100% 진실의 원천으로 유지
+      // 2. [비동기 멈춤 100% 방지] 클릭 즉시 onJoin 호출하여 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
       onJoin(newPlayer)
+
+      // 3. Firebase 저장은 백그라운드 비동기로 전달 (await 대기 없이 비동기 처리하여 화면 멈춤 차단)
+      writeFirebasePlayer(newPlayer).catch((fbErr) => {
+        console.error('❌ [NicknameForm] Firebase 백그라운드 등록 에러 (대기실 진입 유지):', fbErr)
+      })
 
       // 4. 백그라운드로 소켓 및 REST API 백업 전송 (서버 인메모리 및 TV 보조 연동)
       socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
@@ -171,8 +163,6 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
     } catch (err: any) {
       console.error('[NicknameForm handleSubmit error]', err)
       setError(`오류 발생: ${err?.message || err}`)
-    } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -1121,6 +1111,49 @@ function clearLocalPlayerSession() {
 export default function PlayerPage() {
   // 실시간 웹소켓 및 Firebase 상태 동기화
   useFirebaseSync()
+
+  // 모바일 대기실 마운트 시 Firebase RTDB 직접 실시간 리스너 강제 바인딩 (더미 추가/상태 즉각 반영)
+  useEffect(() => {
+    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+    const unsubPlayers = onValue(
+      playersRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (val) {
+          const list: Player[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
+          const myId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+          const myNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+          let merged = list
+          if (myId && myNick && !list.some((p) => p.id === myId)) {
+            merged = [...list, { id: myId, nickname: myNick, status: 'alive', joinedAt: Date.now() }]
+          }
+          useGameStore.getState().syncWithServer({ players: merged })
+        }
+      },
+      (err) => {
+        console.error('❌ [PlayerPage] Firebase players onValue error:', err)
+      }
+    )
+
+    const stateRef = ref(rtdb, RTDB_PATHS.STATE)
+    const unsubState = onValue(
+      stateRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (val) {
+          useGameStore.getState().syncWithServer(val)
+        }
+      },
+      (err) => {
+        console.error('❌ [PlayerPage] Firebase state onValue error:', err)
+      }
+    )
+
+    return () => {
+      off(playersRef, 'value', unsubPlayers)
+      off(stateRef, 'value', unsubState)
+    }
+  }, [])
 
   // Zustand selector를 통한 실시간 반응성 보장 (phase 변경 시 즉각 리렌더링)
   const phase = useGameStore((s) => s.phase)

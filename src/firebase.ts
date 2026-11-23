@@ -5,7 +5,7 @@ import { getAuth } from 'firebase/auth'
 import type { Player, GameState } from './types/game'
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyA_the_last_two_game_key',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'the-last-two-game.firebaseapp.com',
   databaseURL:
     import.meta.env.VITE_FIREBASE_DATABASE_URL ||
@@ -17,11 +17,7 @@ const firebaseConfig = {
 }
 
 export const isFirebaseConfigured = () => {
-  return (
-    Boolean(import.meta.env.VITE_FIREBASE_API_KEY) &&
-    import.meta.env.VITE_FIREBASE_API_KEY !== 'your_api_key_here' &&
-    import.meta.env.VITE_FIREBASE_API_KEY !== 'demo-api-key'
-  )
+  return true
 }
 
 // 1. Firebase 인스턴스 초기화 (싱글톤)
@@ -30,12 +26,12 @@ export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const rtdb = getDatabase(app)
 
-// 2. Realtime Database 경로 상수
+// 2. Realtime Database 경로 상수 (단일화: your-choice-game)
 export const RTDB_PATHS = {
-  GAME: 'games/your-choice',
-  STATE: 'games/your-choice/state',
-  PLAYERS: 'games/your-choice/players',
-  VOTES: 'games/your-choice/votes',
+  GAME: 'your-choice-game',
+  STATE: 'your-choice-game/state',
+  PLAYERS: 'your-choice-game/players',
+  VOTES: 'your-choice-game/votes',
 } as const
 
 // 3. 브라우저 내부 즉각 동기화 채널 (동일 호스트 탭 간 0ms 동기화)
