@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
+import { ref, onValue, off } from 'firebase/database'
 import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
+import { rtdb, RTDB_PATHS } from '../firebase'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -180,6 +182,22 @@ function TVLobby() {
 
   // TV 로비 참가자 실시간 카운트/목록 이벤트 직결 수신
   useEffect(() => {
+    // Firebase RTDB players 실시간 리스너 직결 (games/your-choice/players)
+    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+    const unsubPlayers = onValue(
+      playersRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (val) {
+          const list: any[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
+          useGameStore.getState().syncWithServer({ players: list })
+        }
+      },
+      (err) => {
+        console.error('❌ [TVLobby] Firebase players onValue error:', err)
+      }
+    )
+
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
       let list: any[] = []
@@ -208,6 +226,7 @@ function TVLobby() {
     socket.on('game:qr_mode_changed', handleQrModeChanged)
 
     return () => {
+      off(playersRef, 'value', unsubPlayers)
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)

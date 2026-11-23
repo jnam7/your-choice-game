@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
+import { ref, onValue, off } from 'firebase/database'
 import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
+import { rtdb, RTDB_PATHS } from '../firebase'
 import { exportGameResultsToExcel } from '../utils/excelExport'
 import type { Question, Player, ChatMessage } from '../types/game'
 
@@ -102,6 +104,22 @@ export default function AdminPage() {
 
   // 관리자 화면 참가자 입장/갱신 이벤트 직결 수신
   useEffect(() => {
+    // Firebase RTDB players 실시간 리스너 직결 (games/your-choice/players)
+    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+    const unsubPlayers = onValue(
+      playersRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (val) {
+          const list: Player[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
+          useGameStore.getState().syncWithServer({ players: list })
+        }
+      },
+      (err) => {
+        console.error('❌ [AdminPage] Firebase players onValue error:', err)
+      }
+    )
+
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
       let list: Player[] = []
@@ -123,6 +141,7 @@ export default function AdminPage() {
     socket.on('players:update', handlePlayersUpdate)
 
     return () => {
+      off(playersRef, 'value', unsubPlayers)
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)

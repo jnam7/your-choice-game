@@ -27,12 +27,12 @@ export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const rtdb = getDatabase(app)
 
-// 2. Realtime Database 경로 상수 (단일화: your-choice-game)
+// 2. Realtime Database 경로 상수 (단일화: games/your-choice)
 export const RTDB_PATHS = {
-  GAME: 'your-choice-game',
-  STATE: 'your-choice-game/state',
-  PLAYERS: 'your-choice-game/players',
-  VOTES: 'your-choice-game/votes',
+  GAME: 'games/your-choice',
+  STATE: 'games/your-choice/state',
+  PLAYERS: 'games/your-choice/players',
+  VOTES: 'games/your-choice/votes',
 } as const
 
 // 3. 브라우저 내부 즉각 동기화 채널 (동일 호스트 탭 간 0ms 동기화)
