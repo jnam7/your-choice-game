@@ -92,32 +92,38 @@ export async function writeFirebaseState(stateUpdate: Partial<GameState>) {
 /**
  * 참가자 단일 등록/업데이트
  */
-export async function writeFirebasePlayer(player: Player) {
+export async function writeFirebasePlayer(player: Player): Promise<void> {
   if (syncChannel) {
     try {
       syncChannel.postMessage({ type: 'PLAYER_JOIN', payload: player })
     } catch (e) {}
   }
 
+  const playerPath = `${RTDB_PATHS.PLAYERS}/${player.id}`
+  const playerRef = ref(rtdb, playerPath)
+  const payload = {
+    id: player.id,
+    nickname: player.nickname,
+    status: player.status || 'alive',
+    joinedAt: player.joinedAt || Date.now(),
+    eliminatedRound: player.eliminatedRound || null,
+    isDummy: Boolean(player.isDummy),
+  }
+
   try {
-    const playerRef = ref(rtdb, `${RTDB_PATHS.PLAYERS}/${player.id}`)
-    await set(playerRef, {
-      id: player.id,
-      nickname: player.nickname,
-      status: player.status,
-      joinedAt: player.joinedAt || Date.now(),
-      eliminatedRound: player.eliminatedRound || null,
-      isDummy: Boolean(player.isDummy),
-    })
-  } catch (err) {
-    // 에러 무음 처리
+    console.log('📝 [Firebase RTDB 직접 쓰기 시도]', playerPath, payload)
+    await set(playerRef, payload)
+    console.log('✅ [Firebase RTDB 직접 쓰기 성공]', playerPath)
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 직접 쓰기 실패]', playerPath, err)
+    throw err
   }
 }
 
 /**
  * 참가자 전체 목록 갱신 (더미 참가자 대량 추가 등)
  */
-export async function writeAllFirebasePlayers(players: Player[]) {
+export async function writeAllFirebasePlayers(players: Player[]): Promise<void> {
   if (syncChannel) {
     try {
       syncChannel.postMessage({ type: 'PLAYERS_ALL', payload: players })
@@ -130,33 +136,40 @@ export async function writeAllFirebasePlayers(players: Player[]) {
       playersObj[p.id] = {
         id: p.id,
         nickname: p.nickname,
-        status: p.status,
+        status: p.status || 'alive',
         joinedAt: p.joinedAt || Date.now(),
         eliminatedRound: p.eliminatedRound || null,
         isDummy: Boolean(p.isDummy),
       }
     }
     const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+    console.log('📝 [Firebase RTDB 전체 쓰기 시도]', RTDB_PATHS.PLAYERS, Object.keys(playersObj).length, '명')
     await set(playersRef, playersObj)
-  } catch (err) {
-    // 에러 무음 처리
+    console.log('✅ [Firebase RTDB 전체 쓰기 성공]', RTDB_PATHS.PLAYERS)
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 전체 쓰기 실패]', RTDB_PATHS.PLAYERS, err)
+    throw err
   }
 }
 
 /**
  * 참가자 개별 삭제
  */
-export async function removeFirebasePlayer(playerId: string) {
+export async function removeFirebasePlayer(playerId: string): Promise<void> {
+  const playerPath = `${RTDB_PATHS.PLAYERS}/${playerId}`
   try {
-    const playerRef = ref(rtdb, `${RTDB_PATHS.PLAYERS}/${playerId}`)
+    const playerRef = ref(rtdb, playerPath)
     await remove(playerRef)
-  } catch (err) {}
+    console.log('✅ [Firebase RTDB 삭제 성공]', playerPath)
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 삭제 실패]', playerPath, err)
+  }
 }
 
 /**
  * 참가자 전체 삭제 (관리자 초기화)
  */
-export async function clearFirebasePlayers() {
+export async function clearFirebasePlayers(): Promise<void> {
   if (syncChannel) {
     try {
       syncChannel.postMessage({ type: 'PLAYERS_ALL', payload: [] })
@@ -166,33 +179,42 @@ export async function clearFirebasePlayers() {
   try {
     const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
     await set(playersRef, null)
-  } catch (err) {}
+    console.log('✅ [Firebase RTDB 참가자 전체 삭제 성공]', RTDB_PATHS.PLAYERS)
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 참가자 전체 삭제 실패]', RTDB_PATHS.PLAYERS, err)
+  }
 }
 
 /**
  * 투표 제출
  */
-export async function submitFirebaseVote(playerId: string, choice: 'A' | 'B') {
+export async function submitFirebaseVote(playerId: string, choice: 'A' | 'B'): Promise<void> {
   if (syncChannel) {
     try {
       syncChannel.postMessage({ type: 'VOTE_SUBMIT', payload: { playerId, choice } })
     } catch (e) {}
   }
 
+  const votePath = `${RTDB_PATHS.VOTES}/${playerId}`
   try {
-    const voteRef = ref(rtdb, `${RTDB_PATHS.VOTES}/${playerId}`)
+    const voteRef = ref(rtdb, votePath)
     await set(voteRef, choice)
-  } catch (err) {}
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 투표 쓰기 실패]', votePath, err)
+  }
 }
 
 /**
  * 투표 전체 초기화 (새 라운드 시작 시)
  */
-export async function clearFirebaseVotes() {
+export async function clearFirebaseVotes(): Promise<void> {
   try {
     const votesRef = ref(rtdb, RTDB_PATHS.VOTES)
     await set(votesRef, null)
-  } catch (err) {}
+    console.log('✅ [Firebase RTDB 투표 전체 삭제 성공]', RTDB_PATHS.VOTES)
+  } catch (err: any) {
+    console.error('❌ [Firebase RTDB 투표 전체 삭제 실패]', RTDB_PATHS.VOTES, err)
+  }
 }
 
 /**
@@ -205,60 +227,72 @@ export function listenFirebaseGame(callbacks: {
 }) {
   const unsubs: (() => void)[] = []
 
-  // 실제 유효한 Firebase API Key가 설정되어 있을 때만 RTDB 원격 리스너 가동
-  if (isFirebaseConfigured()) {
-    // 1. Firebase RTDB state 리스너
-    try {
-      const stateRef = ref(rtdb, RTDB_PATHS.STATE)
-      const stateUnsub = onValue(
-        stateRef,
-        (snapshot) => {
-          const val = snapshot.val()
-          if (val && callbacks.onState) {
-            callbacks.onState(val)
-          }
-        },
-        () => {}
-      )
-      unsubs.push(() => off(stateRef, 'value', stateUnsub))
-    } catch (e) {}
+  // 1. Firebase RTDB state 리스너 (games/your-choice/state)
+  try {
+    const stateRef = ref(rtdb, RTDB_PATHS.STATE)
+    const stateUnsub = onValue(
+      stateRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (val && callbacks.onState) {
+          callbacks.onState(val)
+        }
+      },
+      (error) => {
+        console.error('❌ [Firebase RTDB State 리스너 에러]', error)
+      }
+    )
+    unsubs.push(() => off(stateRef, 'value', stateUnsub))
+  } catch (e) {
+    console.error('❌ [Firebase RTDB State 구독 실패]', e)
+  }
 
-    // 2. Firebase RTDB players 리스너
-    try {
-      const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
-      const playersUnsub = onValue(
-        playersRef,
-        (snapshot) => {
-          const val = snapshot.val()
-          if (callbacks.onPlayers && val) {
-            if (Array.isArray(val)) {
-              callbacks.onPlayers(val.filter(Boolean))
-            } else if (typeof val === 'object') {
-              const list: Player[] = Object.values(val)
-              callbacks.onPlayers(list)
-            }
+  // 2. Firebase RTDB players 리스너 (games/your-choice/players)
+  try {
+    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+    const playersUnsub = onValue(
+      playersRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        console.log('📡 [Firebase RTDB Players 수신]:', val ? Object.keys(val).length : 0, '명')
+        if (callbacks.onPlayers) {
+          if (!val) {
+            callbacks.onPlayers([])
+          } else if (Array.isArray(val)) {
+            callbacks.onPlayers(val.filter(Boolean))
+          } else if (typeof val === 'object') {
+            const list: Player[] = Object.values(val)
+            callbacks.onPlayers(list)
           }
-        },
-        () => {}
-      )
-      unsubs.push(() => off(playersRef, 'value', playersUnsub))
-    } catch (e) {}
+        }
+      },
+      (error) => {
+        console.error('❌ [Firebase RTDB Players 리스너 에러]', error)
+      }
+    )
+    unsubs.push(() => off(playersRef, 'value', playersUnsub))
+  } catch (e) {
+    console.error('❌ [Firebase RTDB Players 구독 실패]', e)
+  }
 
-    // 3. Firebase RTDB votes 리스너
-    try {
-      const votesRef = ref(rtdb, RTDB_PATHS.VOTES)
-      const votesUnsub = onValue(
-        votesRef,
-        (snapshot) => {
-          const val = snapshot.val()
-          if (callbacks.onVotes && val) {
-            callbacks.onVotes(val)
-          }
-        },
-        () => {}
-      )
-      unsubs.push(() => off(votesRef, 'value', votesUnsub))
-    } catch (e) {}
+  // 3. Firebase RTDB votes 리스너 (games/your-choice/votes)
+  try {
+    const votesRef = ref(rtdb, RTDB_PATHS.VOTES)
+    const votesUnsub = onValue(
+      votesRef,
+      (snapshot) => {
+        const val = snapshot.val()
+        if (callbacks.onVotes) {
+          callbacks.onVotes(val || {})
+        }
+      },
+      (error) => {
+        console.error('❌ [Firebase RTDB Votes 리스너 에러]', error)
+      }
+    )
+    unsubs.push(() => off(votesRef, 'value', votesUnsub))
+  } catch (e) {
+    console.error('❌ [Firebase RTDB Votes 구독 실패]', e)
   }
 
   // 4. 로컬 브로드캐스트 채널 수신 (동일 기기/브라우저 초고속 동기화)

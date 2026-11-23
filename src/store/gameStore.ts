@@ -317,23 +317,19 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       const newPlayer: Player = { id, nickname, status: 'alive' as const, joinedAt: Date.now() }
 
-      set((state) => {
-        const alreadyInList = state.players.some((p) => p.id === id || p.nickname === nickname)
-        const updatedList = alreadyInList
-          ? state.players.map((p) => (p.nickname === nickname ? { ...p, id, status: 'alive' as const } : p))
-          : [...state.players, newPlayer]
-        return {
-          players: updatedList,
-          currentPlayerId: id,
-        }
-      })
+      // 플레이어 ID 설정 (로컬 플레이어 목록을 임의로 증가시키지 않고 오직 Firebase 수신 데이터만 반영)
+      set({ currentPlayerId: id })
 
-      localStorage.setItem('lasttwo_player_id', id)
-      localStorage.setItem('lasttwo_player_nickname', nickname)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('lasttwo_player_id', id)
+        localStorage.setItem('lasttwo_player_nickname', nickname)
+      }
       persist()
 
-      // Firebase Realtime DB에 즉시 참가자 등록
-      writeFirebasePlayer(newPlayer).catch(() => {})
+      // Firebase Realtime DB에 직접 등록 (games/your-choice/players/${id})
+      writeFirebasePlayer(newPlayer).catch((err) => {
+        console.error('❌ [addPlayer] Firebase 직접 쓰기 실패:', err)
+      })
 
       // 서버에 클라이언트 ID와 함께 웹소켓 참가자 등록 요청
       socket.emit('player:join', { id, nickname }, (response: any) => {

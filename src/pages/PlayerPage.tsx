@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { socket } from '../socket'
-import { writeFirebasePlayer } from '../firebase'
+import { writeFirebasePlayer, removeFirebasePlayer } from '../firebase'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
@@ -101,9 +101,9 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
   const [nickname, setNickname] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const { addPlayer, players } = useGameStore()
+  const players = useGameStore((s) => s.players)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     unlockAudioContext()
     const trimmed = nickname.trim()
@@ -119,57 +119,58 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
 
     try {
       setIsSubmitting(true)
+      setError('')
       const localId = 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)
 
-      // 1. 로컬 스토리지에 즉시 저장
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('lasttwo_player_id', localId)
-        localStorage.setItem('lasttwo_player_nickname', trimmed)
-      }
-
-      // 2. Zustand 스토어에 즉시 등록
-      addPlayer(trimmed, localId)
-
-      // 3. 로컬 참가자 객체 생성 후 onJoin 즉시 호출하여 대기실(WaitingRoom) 화면으로 즉시 전환
       const newPlayer: Player = {
         id: localId,
         nickname: trimmed,
         status: 'alive',
         joinedAt: Date.now(),
       }
+
+      // 1. Firebase Realtime DB에 직접 set() 기록 (games/your-choice/players/${playerId})
+      try {
+        await writeFirebasePlayer(newPlayer)
+      } catch (fbErr: any) {
+        console.error('❌ [NicknameForm] Firebase 참가자 직접 등록 실패:', fbErr)
+        const errMsg = fbErr?.message || 'Firebase Realtime DB 연결 또는 쓰기 권한이 없습니다.'
+        setError(`참가 실패: ${errMsg}`)
+        alert(`[Firebase 등록 오류]\n데이터베이스에 참가자를 기록하지 못했습니다.\n\n오류: ${errMsg}\n\nFirebase 보안 규칙(.read, .write) 및 네트워크 상태를 확인해주세요.`)
+        setIsSubmitting(false)
+        return
+      }
+
+      // 2. Firebase 쓰기 성공 시 로컬 스토리지에 플레이어 식별 정보 저장
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('lasttwo_player_id', localId)
+        localStorage.setItem('lasttwo_player_nickname', trimmed)
+      }
+
+      // 3. 로컬 상태에 플레이어를 임의로 추가(addPlayer)하지 않고, Firebase 실시간 DB 구독 목록을 100% 진실의 원천으로 유지
       onJoin(newPlayer)
 
-      // 4. Firebase Realtime DB에 즉시 등록 (관리자/TV 참석 인원 실시간 연동)
-      writeFirebasePlayer(newPlayer).catch(() => {})
-
-      // 5. 백그라운드로 소켓 통신 전송 (네트워크 지연과 무관하게 비동기 동기화)
+      // 4. 백그라운드로 소켓 및 REST API 백업 전송 (서버 인메모리 및 TV 보조 연동)
       socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
         if (res?.success && res?.player) {
           onJoin(res.player)
         }
       })
 
-      // 5. REST API 백업 전송 (네트워크 지연/차단 시에도 서버 players 및 TV 화면에 100% 반영)
       fetch('/api/game/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: localId, nickname: trimmed }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data?.player) {
-            onJoin(data.player)
-          }
-        })
-        .catch(() => {})
+      }).catch(() => {})
 
       fetch('/api/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: localId, nickname: trimmed }),
       }).catch(() => {})
-    } catch (err) {
+    } catch (err: any) {
       console.error('[NicknameForm handleSubmit error]', err)
+      setError(`오류 발생: ${err?.message || err}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -271,6 +272,15 @@ function WaitingRoom({
     if (!localId || !localNick) return
 
     const ensureRegistered = () => {
+      // Firebase RTDB 직접 갱신 (games/your-choice/players/${playerId})
+      writeFirebasePlayer({
+        id: localId,
+        nickname: localNick,
+        status: currentPlayer?.status || 'alive',
+        joinedAt: currentPlayer?.joinedAt || Date.now(),
+      }).catch((e) => {
+        console.error('❌ [WaitingRoom Heartbeat Error]', e)
+      })
       socket.emit('player:join', { id: localId, nickname: localNick })
       fetch('/api/game/join', {
         method: 'POST',
@@ -280,9 +290,9 @@ function WaitingRoom({
     }
 
     ensureRegistered()
-    const timer = setInterval(ensureRegistered, 3000)
+    const timer = setInterval(ensureRegistered, 4000)
     return () => clearInterval(timer)
-  }, [currentPlayer?.id, currentPlayer?.nickname])
+  }, [currentPlayer?.id, currentPlayer?.nickname, currentPlayer?.status, currentPlayer?.joinedAt])
 
   const handleSaveNickname = (e: React.FormEvent) => {
     e.preventDefault()
@@ -297,6 +307,16 @@ function WaitingRoom({
     }
     changeNickname(trimmed)
     onNicknameChange?.(trimmed)
+    if (currentPlayer?.id) {
+      writeFirebasePlayer({
+        id: currentPlayer.id,
+        nickname: trimmed,
+        status: currentPlayer.status || 'alive',
+        joinedAt: currentPlayer.joinedAt || Date.now(),
+      }).catch((e) => {
+        console.error('❌ [handleSaveNickname Firebase Error]', e)
+      })
+    }
     setIsEditing(false)
     setEditError('')
   }
@@ -1164,6 +1184,9 @@ export default function PlayerPage() {
   const handleExitGame = () => {
     const idToLeave = myPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
     if (idToLeave) {
+      removeFirebasePlayer(idToLeave).catch((e) => {
+        console.error('❌ [handleExitGame removeFirebasePlayer Error]', e)
+      })
       socket.emit('player:leave', { id: idToLeave })
       fetch('/api/game/leave', {
         method: 'POST',
@@ -1190,6 +1213,7 @@ export default function PlayerPage() {
       if (phase === 'lobby') {
         const id = myPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
         if (id) {
+          removeFirebasePlayer(id).catch(() => {})
           const blob = new Blob([JSON.stringify({ id })], { type: 'application/json' })
           navigator.sendBeacon('/api/game/leave', blob)
         }

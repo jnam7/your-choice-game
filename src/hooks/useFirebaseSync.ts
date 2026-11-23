@@ -46,13 +46,10 @@ export function useFirebaseSync() {
         })
       },
       onPlayers: (playersList: Player[]) => {
-        if (!playersList || playersList.length === 0) return
-        const currentPlayers = useGameStore.getState().players
-        const map = new Map<string, Player>()
-        for (const p of currentPlayers) map.set(p.id, p)
-        for (const p of playersList) map.set(p.id, p)
+        // Firebase Realtime DB에서 수신한 진짜 참가자 목록을 100% 기준으로 동기화 (로컬 가짜 참가자 병합 제거)
+        const validList = Array.isArray(playersList) ? playersList : []
         syncWithServer({
-          players: Array.from(map.values()),
+          players: validList,
         })
       },
       onVotes: (votesMap: Record<string, 'A' | 'B'>) => {
@@ -183,9 +180,7 @@ export function useFirebaseSync() {
         incomingList = [data.player]
       }
 
-      const isConsole = typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))
-
-      if (isFullList && isConsole) {
+      if (isFullList) {
         syncWithServer({ players: incomingList })
       } else if (incomingList.length > 0) {
         const cur = useGameStore.getState().players
