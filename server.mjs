@@ -529,6 +529,21 @@ io.on('connection', (socket) => {
       console.error('[chat:send Error]', e)
     }
   })
+
+  // 관리자 외부 접속 URL 수동 설정 (admin:update_server_url)
+  socket.on('admin:update_server_url', (newUrl) => {
+    try {
+      if (newUrl && typeof newUrl === 'string') {
+        publicTunnelUrl = newUrl.trim()
+        gameState.serverHostUrl = publicTunnelUrl
+        io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
+        io.emit('server:tunnel_updated', publicTunnelUrl)
+        console.log(`[Admin] Server external URL updated to: ${publicTunnelUrl}`)
+      }
+    } catch (e) {
+      console.error('[admin:update_server_url Error]', e)
+    }
+  })
 })
 
 // 4. 로컬 IP 자동 감지 유틸리티

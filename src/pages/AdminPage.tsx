@@ -135,6 +135,8 @@ export default function AdminPage() {
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null)
   const [isEditingUrl, setIsEditingUrl] = useState(false)
   const [tunnelUrl, setTunnelUrl] = useState('')
+  const [localIp, setLocalIp] = useState('192.168.40.111')
+  const [adminQrTab, setAdminQrTab] = useState<'wifi' | 'lte'>('wifi')
 
   const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
@@ -142,29 +144,30 @@ export default function AdminPage() {
   const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)
   const isPublicDomain = !isLocalhost && !isPrivateIp
 
-  const wifiUrl = isPublicDomain
-    ? originUrl
-    : (!isLocalhost
-      ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
-      : 'http://192.168.40.111:5000/')
+  // 1. Wi-Fi 접속 URL: 로컬 사설망 전용 (절대 외부 URL과 혼동되지 않음)
+  const wifiUrl = !isLocalhost
+    ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
+    : `http://${localIp || '192.168.40.111'}:5000/`
 
-  const isServerHostExternal = Boolean(
-    serverHostUrl &&
-    serverHostUrl.startsWith('http') &&
-    !serverHostUrl.includes('localhost') &&
-    !serverHostUrl.includes('127.0.0.1') &&
-    !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(serverHostUrl)
-  )
+  // 2. LTE / 5G 외부 접속 전용 URL
+  const isExternalUrl = (url: string) =>
+    Boolean(
+      url &&
+      url.startsWith('http') &&
+      !url.includes('localhost') &&
+      !url.includes('127.0.0.1') &&
+      !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(url)
+    )
 
-  const publicUrl = tunnelUrl
+  const lteUrl = isExternalUrl(tunnelUrl)
     ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
     : (isPublicDomain
       ? originUrl
-      : (isServerHostExternal
+      : (isExternalUrl(serverHostUrl)
         ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
         : ''))
 
-  const [customUrlInput, setCustomUrlInput] = useState(isPublicDomain ? originUrl : (publicUrl || wifiUrl))
+  const [customUrlInput, setCustomUrlInput] = useState('')
 
   // 서버 정보 및 외부 터널 URL 실시간 연동 (3번 서바이벌 퀴즈 방식)
   useEffect(() => {
@@ -174,7 +177,8 @@ export default function AdminPage() {
     fetch('/api/server-info')
       .then((res) => (res.ok ? res.json() : null))
       .then((info) => {
-        if (info?.publicUrl) {
+        if (info?.localIp) setLocalIp(info.localIp)
+        if (info?.publicUrl && isExternalUrl(info.publicUrl)) {
           setTunnelUrl(info.publicUrl)
           setServerHostUrl(info.publicUrl)
           setCustomUrlInput(info.publicUrl)
@@ -184,7 +188,7 @@ export default function AdminPage() {
 
     // 2. 소켓 터널 URL 업데이트 이벤트 실시간 수신
     const handleTunnelUpdated = (newUrl: string) => {
-      if (newUrl && newUrl.startsWith('http')) {
+      if (newUrl && isExternalUrl(newUrl)) {
         setTunnelUrl(newUrl)
         setServerHostUrl(newUrl)
         setCustomUrlInput(newUrl)
@@ -210,7 +214,7 @@ export default function AdminPage() {
     ? players.filter((p) => !currentResult.survivors.includes(p.id))
     : players.filter((p) => p.status === 'eliminated')
   const voteCount = Object.keys(votes).length
-  const joinUrl = qrMode === 'tunnel' ? (publicUrl || wifiUrl) : wifiUrl
+  const currentActiveUrl = adminQrTab === 'wifi' ? wifiUrl : (lteUrl || customUrlInput)
 
   // 1. 투표 15초 타이머 (Voting Phase) - votingDeadline 기반 정확한 동기화 및 0초 도달 시 즉시 자동 마감
   const [votingTimeLeft, setVotingTimeLeft] = useState(timeLimit || 15)
@@ -306,19 +310,20 @@ export default function AdminPage() {
   const [copied, setCopied] = useState(false)
 
   const handleDownloadQR = () => {
-    const canvas = document.getElementById('admin-qr-canvas') as HTMLCanvasElement
+    const canvasId = adminQrTab === 'wifi' ? 'admin-wifi-qr-canvas' : 'admin-lte-qr-canvas'
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement
     if (!canvas) return
     const pngUrl = canvas.toDataURL('image/png')
     const downloadLink = document.createElement('a')
     downloadLink.href = pngUrl
-    downloadLink.download = 'THE_LAST_TWO_직원접속_QR코드.png'
+    downloadLink.download = `당신의선택_${adminQrTab === 'wifi' ? '사내와이파이' : '외부LTE5G'}_접속QR.png`
     document.body.appendChild(downloadLink)
     downloadLink.click()
     document.body.removeChild(downloadLink)
   }
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(joinUrl).then(() => {
+    navigator.clipboard.writeText(currentActiveUrl).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
@@ -882,98 +887,142 @@ export default function AdminPage() {
           <div className="space-y-5">
             {/* 참가자 접속용 QR 코드 */}
             <div className="glass-card p-5 text-center border border-gold/20 shadow-xl">
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-center mb-3">
                 <h3 className="font-display text-base text-gold">📱 모바일 참가자 접속 QR</h3>
-                <button
-                  onClick={() => setIsEditingUrl(!isEditingUrl)}
-                  className="text-xs text-gold/70 hover:text-gold underline"
-                >
-                  {isEditingUrl ? '닫기' : '주소 변경'}
-                </button>
-              </div>
-
-              {/* 주소 선택 프리셋 버튼 */}
-              <div className="flex flex-col gap-1.5 mb-3 text-left">
-                <div className="flex gap-1.5">
+                {adminQrTab === 'lte' && (
                   <button
-                    type="button"
-                    onClick={() => {
-                      setQrMode('wifi')
-                      setCustomUrlInput(wifiUrl)
-                    }}
-                    className={`flex-1 px-2 py-1 rounded text-[11px] font-bold border transition-all ${
-                      qrMode === 'wifi'
-                        ? 'bg-gold text-navy-dark border-gold shadow-md shadow-gold/20'
-                        : 'bg-navy border-gold/20 text-gray-300 hover:text-white'
-                    }`}
+                    onClick={() => setIsEditingUrl(!isEditingUrl)}
+                    className="text-xs text-gold/70 hover:text-gold underline"
                   >
-                    📶 같은 Wi-Fi 접속
+                    {isEditingUrl ? '닫기' : '외부주소 설정'}
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQrMode('tunnel')
-                      if (publicUrl) {
-                        setCustomUrlInput(publicUrl)
-                      }
-                    }}
-                    className={`flex-1 px-2 py-1 rounded text-[11px] font-bold border transition-all ${
-                      qrMode === 'tunnel'
-                        ? 'bg-gold text-navy-dark border-gold shadow-md shadow-gold/20'
-                        : 'bg-navy border-gold/20 text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    🌍 어디서나(LTE/5G) {publicUrl ? '🟢' : '⚠️'}
-                  </button>
-                </div>
-
-                {isEditingUrl && (
-                  <div className="mt-1 flex gap-1">
-                    <input
-                      type="text"
-                      value={customUrlInput}
-                      onChange={(e) => setCustomUrlInput(e.target.value)}
-                      placeholder="접속 주소 직접 입력"
-                      className="flex-1 px-2 py-1 bg-navy-dark border border-gold/30 rounded text-xs text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setServerHostUrl(customUrlInput.trim())
-                        setIsEditingUrl(false)
-                      }}
-                      className="px-2.5 py-1 bg-gold text-navy-dark text-xs font-bold rounded"
-                    >
-                      적용
-                    </button>
-                  </div>
                 )}
               </div>
 
-              <div className="bg-white p-3.5 rounded-2xl inline-block shadow-lg">
-                <QRCodeCanvas
-                  id="admin-qr-canvas"
-                  value={joinUrl}
-                  size={170}
-                  bgColor="#ffffff"
-                  fgColor="#0B1426"
-                  level="H"
-                  includeMargin={true}
-                />
+              {/* 2개의 분리된 탭 선택기 (사내 Wi-Fi vs 외부 LTE/5G) */}
+              <div className="flex gap-2 mb-3.5">
+                <button
+                  type="button"
+                  onClick={() => setAdminQrTab('wifi')}
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
+                    adminQrTab === 'wifi'
+                      ? 'bg-emerald-500 text-navy-dark border-emerald-400 shadow-lg shadow-emerald-500/30'
+                      : 'bg-navy-dark border-emerald-500/30 text-gray-300 hover:text-white'
+                  }`}
+                >
+                  📶 사내 Wi-Fi QR
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminQrTab('lte')}
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
+                    adminQrTab === 'lte'
+                      ? 'bg-gold text-navy-dark border-gold shadow-lg shadow-gold/30'
+                      : 'bg-navy-dark border-gold/30 text-gray-300 hover:text-white'
+                  }`}
+                >
+                  🌍 LTE / 5G QR {lteUrl ? '🟢' : '⏳'}
+                </button>
               </div>
 
-              {/* QR 다운로드 및 링크 복사 버튼 */}
-              <div className="mt-4 flex flex-col sm:flex-row gap-2 justify-center">
+              {/* Wi-Fi 전용 QR 뷰 */}
+              {adminQrTab === 'wifi' && (
+                <div>
+                  <div className="mb-2 text-xs text-emerald-400 font-medium">
+                    📶 사내/행사장 Wi-Fi 연결 참가자 전용 (로컬 고속망)
+                  </div>
+                  <div className="bg-white p-3.5 rounded-2xl inline-block shadow-lg border-2 border-emerald-500/30">
+                    <QRCodeCanvas
+                      id="admin-wifi-qr-canvas"
+                      value={wifiUrl}
+                      size={170}
+                      bgColor="#ffffff"
+                      fgColor="#0B1426"
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <p className="text-emerald-300 text-xs mt-2.5 break-all font-mono bg-navy-dark p-2 rounded border border-emerald-500/20">
+                    {wifiUrl}
+                  </p>
+                </div>
+              )}
+
+              {/* LTE / 5G 전용 QR 뷰 */}
+              {adminQrTab === 'lte' && (
+                <div>
+                  <div className="mb-2 text-xs text-gold font-medium">
+                    🌍 모바일 데이터(LTE/5G) 접속 참가자 전용
+                  </div>
+
+                  {isEditingUrl && (
+                    <div className="mb-2.5 flex gap-1">
+                      <input
+                        type="text"
+                        value={customUrlInput}
+                        onChange={(e) => setCustomUrlInput(e.target.value)}
+                        placeholder="외부 주소 (예: https://...)"
+                        className="flex-1 px-2.5 py-1 bg-navy-dark border border-gold/40 rounded text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (customUrlInput.trim()) {
+                            setServerHostUrl(customUrlInput.trim())
+                            socket.emit('admin:update_server_url', customUrlInput.trim())
+                          }
+                          setIsEditingUrl(false)
+                        }}
+                        className="px-2.5 py-1 bg-gold text-navy-dark text-xs font-bold rounded"
+                      >
+                        적용
+                      </button>
+                    </div>
+                  )}
+
+                  {lteUrl ? (
+                    <div className="bg-white p-3.5 rounded-2xl inline-block shadow-lg border-2 border-gold/40">
+                      <QRCodeCanvas
+                        id="admin-lte-qr-canvas"
+                        value={lteUrl}
+                        size={170}
+                        bgColor="#ffffff"
+                        fgColor="#0B1426"
+                        level="H"
+                        includeMargin={true}
+                      />
+                    </div>
+                  ) : (
+                    <div className="bg-navy-dark p-5 rounded-2xl border border-gold/30 text-center my-2">
+                      <span className="text-2xl animate-spin inline-block mb-1.5">🔄</span>
+                      <p className="text-xs text-gold font-bold mb-1">외부 공인 터널 주소 발급 대기 중</p>
+                      <p className="text-[11px] text-gray-400 leading-relaxed">
+                        Wi-Fi 탭을 이용하시거나, 상단의 [외부주소 설정]에서 외부 도메인을 직접 입력하세요.
+                      </p>
+                    </div>
+                  )}
+
+                  <p className="text-gold text-xs mt-2.5 break-all font-mono bg-navy-dark p-2 rounded border border-gold/20">
+                    {lteUrl || '외부 접속 주소 연결 대기 중...'}
+                  </p>
+                </div>
+              )}
+
+              {/* 다운로드 및 복사 버튼 */}
+              <div className="mt-3.5 flex flex-col sm:flex-row gap-2 justify-center">
                 <button
                   onClick={handleDownloadQR}
-                  className="px-3.5 py-2 bg-gradient-to-r from-gold-dark to-gold text-navy-dark rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-gold/30 transition-all flex items-center justify-center gap-1.5 shadow"
-                  title="인쇄용 고화질 PNG 이미지로 다운로드"
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow ${
+                    adminQrTab === 'wifi'
+                      ? 'bg-emerald-500 text-navy-dark hover:bg-emerald-400'
+                      : 'bg-gold text-navy-dark hover:bg-gold-light'
+                  }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  QR 이미지 저장
+                  {adminQrTab === 'wifi' ? 'Wi-Fi QR 다운로드' : 'LTE QR 다운로드'}
                 </button>
 
                 <button
@@ -986,10 +1035,6 @@ export default function AdminPage() {
                   {copied ? '복사 완료!' : '접속 링크 복사'}
                 </button>
               </div>
-
-              <p className="text-gray-400 text-xs mt-3 break-all font-mono bg-navy-dark p-2 rounded border border-gold/10">
-                {joinUrl}
-              </p>
             </div>
 
             {/* 참가자 실시간 상태 명단 */}

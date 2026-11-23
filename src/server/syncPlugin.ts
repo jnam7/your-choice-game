@@ -587,6 +587,14 @@ export function syncPlugin(): Plugin {
           ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
         }
       })
+
+      socket.on('admin:update_server_url', (newUrl) => {
+        if (newUrl && typeof newUrl === 'string') {
+          gameState.serverHostUrl = newUrl.trim()
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', newUrl.trim())
+          ioInstance?.emit('server:tunnel_updated', newUrl.trim())
+        }
+      })
     })
   }
 
