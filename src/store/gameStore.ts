@@ -153,8 +153,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
 
-      // 관리자 화면 또는 TV 화면에서 상태 변경 시 웹소켓 + HTTP 즉시 동기화
-      if (typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv') || window.location.pathname === '/')) {
+      // 관리자 화면(/admin)에서만 서버 전체 상태 동기화 권한 부여 (참가자 및 TV 화면이 대기실 상태로 서버를 덮어쓰는 버그 원천 차단)
+      if (typeof window !== 'undefined' && window.location.pathname.includes('/admin')) {
         const syncPayload = {
           phase: state.phase,
           roundNumber: state.roundNumber,

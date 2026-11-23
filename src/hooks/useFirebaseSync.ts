@@ -127,6 +127,11 @@ export function useFirebaseSync() {
       }
     }
 
+    const handleConnect = () => {
+      fetchLatestState()
+    }
+
+    socket.on('connect', handleConnect)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
     socket.on('game:round_started', handleRoundStarted)
@@ -134,7 +139,7 @@ export function useFirebaseSync() {
     socket.on('game:set_reset', handleForceLobby)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
 
-    // ===== 3. HTTP 백업 폴링 (초기 1회 및 주기적 1.5초 안전장치) =====
+    // ===== 3. HTTP 백업 폴링 (초기 1회 및 주기적 1초 안전장치 + 모바일 화면 복귀 시 즉시 동기화) =====
     const fetchLatestState = async () => {
       try {
         let res = await fetch('/api/game/state')
@@ -147,12 +152,36 @@ export function useFirebaseSync() {
         }
       } catch (e) {}
     }
+
     fetchLatestState()
-    const pollInterval = setInterval(fetchLatestState, 1500)
+    const pollInterval = setInterval(fetchLatestState, 1000)
+
+    // 모바일 기기 화면 켜짐/포커스/탭 복귀 시 즉각 최신 상태 동기화
+    const handleWakeup = () => {
+      if (!socket.connected) {
+        socket.connect()
+      }
+      fetchLatestState()
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWakeup)
+      window.addEventListener('pageshow', handleWakeup)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          handleWakeup()
+        }
+      })
+    }
 
     return () => {
       clearInterval(pollInterval)
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWakeup)
+        window.removeEventListener('pageshow', handleWakeup)
+      }
       unsubscribeFirebase()
+      socket.off('connect', handleConnect)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
       socket.off('game:round_started', handleRoundStarted)

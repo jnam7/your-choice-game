@@ -603,6 +603,65 @@ app.post('/api/game/sync', (req, res) => {
   }
 })
 
+app.post('/api/admin/sync', (req, res) => {
+  try {
+    applyAdminSync(req.body)
+    res.json({ success: true, state: gameState })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/vote', (req, res) => {
+  try {
+    const { playerId, choice } = req.body || {}
+    if (!playerId || (choice !== 'A' && choice !== 'B')) {
+      return res.status(400).json({ success: false, error: '잘못된 투표 요청입니다.' })
+    }
+    const player = gameState.players.find((p) => p.id === playerId)
+    if (player && (player.status === 'eliminated' || player.isAlive === false)) {
+      return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
+    }
+    gameState.votes[playerId] = choice
+    broadcastState()
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/join', (req, res) => {
+  try {
+    const nickname = (req.body?.nickname || '').trim()
+    const requestedId = req.body?.id
+    if (!nickname) {
+      return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
+    }
+    let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+    if (!player) {
+      player = {
+        id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+        nickname,
+        status: 'alive',
+        isAlive: true,
+        joinedAt: Date.now(),
+      }
+      gameState.players.push(player)
+      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+    } else {
+      if (requestedId) player.id = requestedId
+      player.nickname = nickname
+      player.status = 'alive'
+      player.isAlive = true
+      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+    }
+    broadcastState()
+    res.json({ success: true, player })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 app.post('/api/game/vote', (req, res) => {
   try {
     const { playerId, choice } = req.body || {}

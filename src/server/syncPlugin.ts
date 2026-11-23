@@ -1,19 +1,28 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
+import { Server as SocketIOServer } from 'socket.io'
 
 interface Player {
   id: string
   nickname: string
   status: 'alive' | 'eliminated'
   joinedAt: number
+  isDummy?: boolean
+  isAlive?: boolean
+  eliminatedRound?: number
 }
 
 interface ServerGameState {
   phase: string
   roundNumber: number
+  ruleMode: 'majority' | 'minority'
+  qrMode: 'wifi' | 'tunnel'
+  serverHostUrl: string
   currentQuestion: any
   currentResult: any
   isFinals: boolean
+  isGameOver: boolean
+  soleWinnerId: string | null
   isPaused: boolean
   timeLimit: number
   votingDeadline: number | null
@@ -26,9 +35,20 @@ interface ServerGameState {
 const gameState: ServerGameState = {
   phase: 'lobby',
   roundNumber: 0,
-  currentQuestion: null,
+  ruleMode: 'majority',
+  qrMode: 'wifi',
+  serverHostUrl: '',
+  currentQuestion: {
+    id: 1,
+    category: '음식',
+    optionA: '평생 치킨만 먹기',
+    optionB: '평생 피자만 먹기',
+    isFinals: false,
+  },
   currentResult: null,
   isFinals: false,
+  isGameOver: false,
+  soleWinnerId: null,
   isPaused: false,
   timeLimit: 15,
   votingDeadline: null,
@@ -36,6 +56,17 @@ const gameState: ServerGameState = {
   players: [],
   votes: {},
   chatMessages: [],
+}
+
+let ioInstance: SocketIOServer | null = null
+const SOCKET_ROOM_MAIN = 'room:survival_quiz_main'
+
+function broadcastState() {
+  if (!ioInstance) return
+  ioInstance.to(SOCKET_ROOM_MAIN).emit('game:state_sync', gameState)
+  ioInstance.to(SOCKET_ROOM_MAIN).emit('state:sync', gameState)
+  ioInstance.emit('game:state_sync', gameState)
+  ioInstance.emit('state:sync', gameState)
 }
 
 function parseJsonBody(req: IncomingMessage): Promise<any> {
@@ -78,6 +109,38 @@ function sendJson(res: ServerResponse, status: number, data: any) {
   res.end(JSON.stringify(data))
 }
 
+function applyAdminSync(updates: any) {
+  if (updates && typeof updates === 'object') {
+    const { players: incomingPlayers, ...safeUpdates } = updates
+    Object.assign(gameState, safeUpdates)
+
+    if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
+      const statusMap = new Map(incomingPlayers.map((p: any) => [p.id, p.status]))
+      for (const p of gameState.players) {
+        if (statusMap.has(p.id)) {
+          p.status = statusMap.get(p.id)
+        }
+      }
+    }
+
+    if (updates.currentResult?.eliminated && Array.isArray(updates.currentResult.eliminated)) {
+      const elimSet = new Set(updates.currentResult.eliminated)
+      for (const p of gameState.players) {
+        if (elimSet.has(p.id)) {
+          p.status = 'eliminated'
+          p.eliminatedRound = updates.roundNumber
+        }
+      }
+    }
+
+    if (updates.currentResult) {
+      gameState.currentResult = updates.currentResult
+    }
+
+    broadcastState()
+  }
+}
+
 export function syncPlugin(): Plugin {
   const handler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = req.url?.split('?')[0] || ''
@@ -91,14 +154,20 @@ export function syncPlugin(): Plugin {
       return
     }
 
-    // 1. 전체 상태 조회
-    if (req.method === 'GET' && url === '/api/state') {
+    // 1. 전체 상태 조회 (state 및 game/state)
+    if (req.method === 'GET' && (url === '/api/state' || url === '/api/game/state')) {
       sendJson(res, 200, gameState)
       return
     }
 
-    // 2. 참가자 참가 (join)
-    if (req.method === 'POST' && url === '/api/join') {
+    // 2. 서버 정보 조회
+    if (req.method === 'GET' && url === '/api/server-info') {
+      sendJson(res, 200, { publicUrl: gameState.serverHostUrl || '' })
+      return
+    }
+
+    // 3. 참가자 참가 (join 및 game/join)
+    if (req.method === 'POST' && (url === '/api/join' || url === '/api/game/join')) {
       const body = await parseJsonBody(req)
       const nickname = (body.nickname || '').trim()
       const requestedId = body.id
@@ -108,57 +177,134 @@ export function syncPlugin(): Plugin {
         return
       }
 
-      let player = gameState.players.find((p) => p.nickname === nickname)
+      let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
       if (!player) {
         player = {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
           nickname,
           status: 'alive',
+          isAlive: true,
           joinedAt: Date.now(),
         }
         gameState.players.push(player)
+      } else {
+        if (requestedId) player.id = requestedId
+        player.nickname = nickname
+        player.status = 'alive'
+        player.isAlive = true
       }
 
+      broadcastState()
       sendJson(res, 200, { success: true, player })
       return
     }
 
-    // 3. 투표 제출 (vote)
-    if (req.method === 'POST' && url === '/api/vote') {
+    // 4. 투표 제출 (vote 및 game/vote)
+    if (req.method === 'POST' && (url === '/api/vote' || url === '/api/game/vote')) {
       const body = await parseJsonBody(req)
       const { playerId, choice } = body
 
-      if (playerId && (choice === 'A' || choice === 'B')) {
-        gameState.votes[playerId] = choice
+      if (!playerId || (choice !== 'A' && choice !== 'B')) {
+        sendJson(res, 400, { success: false, error: '잘못된 투표 요청입니다.' })
+        return
       }
 
+      const player = gameState.players.find((p) => p.id === playerId)
+      if (player && (player.status === 'eliminated' || player.isAlive === false)) {
+        sendJson(res, 403, { success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
+        return
+      }
+
+      gameState.votes[playerId] = choice
+      broadcastState()
       sendJson(res, 200, { success: true, votes: gameState.votes })
       return
     }
 
-    // 4. 관리자 상태 동기화 (admin sync)
-    if (req.method === 'POST' && url === '/api/admin/sync') {
+    // 5. 관리자 게임 시작 (game/start)
+    if (req.method === 'POST' && url === '/api/game/start') {
       const body = await parseJsonBody(req)
-      if (body && typeof body === 'object') {
-        // 관리자가 전송한 필드 업데이트
-        if (body.phase !== undefined) gameState.phase = body.phase
-        if (body.roundNumber !== undefined) gameState.roundNumber = body.roundNumber
-        if (body.currentQuestion !== undefined) gameState.currentQuestion = body.currentQuestion
-        if (body.currentResult !== undefined) gameState.currentResult = body.currentResult
-        if (body.isFinals !== undefined) gameState.isFinals = body.isFinals
-        if (body.isPaused !== undefined) gameState.isPaused = body.isPaused
-        if (body.timeLimit !== undefined) gameState.timeLimit = body.timeLimit
-        if (body.votingDeadline !== undefined) gameState.votingDeadline = body.votingDeadline
-        if (body.timeLeft !== undefined) gameState.timeLeft = body.timeLeft
-        if (body.players !== undefined && Array.isArray(body.players)) gameState.players = body.players
-        if (body.votes !== undefined && typeof body.votes === 'object') gameState.votes = body.votes
+      gameState.roundNumber = 1
+      gameState.votes = {}
+      gameState.currentResult = null
+      gameState.isGameOver = false
+      gameState.soleWinnerId = null
+      gameState.isPaused = false
+      gameState.players.forEach((p) => {
+        p.status = 'alive'
+        p.isAlive = true
+        p.eliminatedRound = undefined
+      })
+      if (body.question) gameState.currentQuestion = body.question
+      if (body.ruleMode) gameState.ruleMode = body.ruleMode
+      const limit = Number(body.timeLimit) || gameState.timeLimit || 15
+      gameState.timeLimit = limit
+      if (body.autoStartVoting !== false) {
+        gameState.phase = 'voting'
+        gameState.votingDeadline = Date.now() + limit * 1000
+        gameState.timeLeft = limit
+      } else {
+        gameState.phase = 'question'
+        gameState.votingDeadline = null
+        gameState.timeLeft = limit
       }
 
+      broadcastState()
+      if (ioInstance) {
+        ioInstance.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+          roundNumber: 1,
+          question: gameState.currentQuestion,
+          timeLimit: gameState.timeLimit,
+          votingDeadline: gameState.votingDeadline,
+        })
+      }
       sendJson(res, 200, { success: true, state: gameState })
       return
     }
 
-    // 5. 채팅 메시지 전송
+    // 6. 관리자 상태 동기화 (admin/sync 및 game/sync)
+    if (req.method === 'POST' && (url === '/api/admin/sync' || url === '/api/game/sync')) {
+      const body = await parseJsonBody(req)
+      applyAdminSync(body)
+      sendJson(res, 200, { success: true, state: gameState })
+      return
+    }
+
+    // 7. 게임 리셋 (game/reset)
+    if (req.method === 'POST' && url === '/api/game/reset') {
+      const body = await parseJsonBody(req)
+      const { keepPlayers } = body || {}
+      gameState.phase = 'lobby'
+      gameState.roundNumber = 0
+      gameState.currentQuestion = null
+      gameState.currentResult = null
+      gameState.isGameOver = false
+      gameState.soleWinnerId = null
+      gameState.votes = {}
+      if (keepPlayers) {
+        gameState.players.forEach((p) => {
+          p.status = 'alive'
+          p.isAlive = true
+          p.eliminatedRound = undefined
+        })
+        broadcastState()
+        if (ioInstance) {
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+        }
+      } else {
+        gameState.players = []
+        broadcastState()
+        if (ioInstance) {
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('game:reset')
+        }
+      }
+      sendJson(res, 200, { success: true })
+      return
+    }
+
+    // 8. 채팅 메시지 전송
     if (req.method === 'POST' && url === '/api/chat') {
       const body = await parseJsonBody(req)
       const { nickname, message } = body
@@ -173,6 +319,10 @@ export function syncPlugin(): Plugin {
         if (gameState.chatMessages.length > 50) {
           gameState.chatMessages.shift()
         }
+        if (ioInstance) {
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+          ioInstance.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+        }
         sendJson(res, 200, { success: true, message: msg })
         return
       }
@@ -183,13 +333,240 @@ export function syncPlugin(): Plugin {
     next()
   }
 
+  function setupSocketIO(httpServer: any) {
+    if (!httpServer || ioInstance) return
+
+    ioInstance = new SocketIOServer(httpServer, {
+      cors: { origin: '*', methods: ['GET', 'POST'] },
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      connectTimeout: 45000,
+      allowEIO3: true,
+    })
+
+    ioInstance.on('connection', (socket) => {
+      socket.join(SOCKET_ROOM_MAIN)
+      socket.emit('game:state_sync', gameState)
+      socket.emit('state:sync', gameState)
+
+      socket.on('player:join', (data, callback) => {
+        try {
+          const nickname = (data?.nickname || '').trim()
+          const requestedId = data?.id || data?.token
+          if (!nickname) {
+            if (callback) callback({ success: false, error: '닉네임을 입력해주세요.' })
+            return
+          }
+          let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+          if (!player) {
+            player = {
+              id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+              nickname,
+              status: 'alive',
+              isAlive: true,
+              joinedAt: Date.now(),
+            }
+            gameState.players.push(player)
+          } else {
+            if (requestedId) player.id = requestedId
+            player.nickname = nickname
+            player.status = 'alive'
+            player.isAlive = true
+          }
+          broadcastState()
+          if (callback) callback({ success: true, player })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
+      })
+
+      socket.on('player:vote', (data, callback) => {
+        try {
+          const { playerId, choice } = data || {}
+          if (!playerId || (choice !== 'A' && choice !== 'B')) {
+            if (callback) callback({ success: false, error: '잘못된 투표 요청입니다.' })
+            return
+          }
+          gameState.votes[playerId] = choice
+          broadcastState()
+          if (callback) callback({ success: true })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
+      })
+
+      socket.on('player:submit_answer', (data, callback) => {
+        const choice = data?.choice || (data?.answerIndex === 0 ? 'A' : (data?.answerIndex === 1 ? 'B' : null))
+        const pId = data?.playerId || data?.token || socket.id
+        if (pId && (choice === 'A' || choice === 'B')) {
+          gameState.votes[pId] = choice
+          broadcastState()
+          if (callback) callback({ success: true })
+        }
+      })
+
+      socket.on('admin:start_game', (data, callback) => {
+        try {
+          gameState.roundNumber = 1
+          gameState.votes = {}
+          gameState.currentResult = null
+          gameState.isGameOver = false
+          gameState.soleWinnerId = null
+          gameState.isPaused = false
+          gameState.players.forEach((p) => {
+            p.status = 'alive'
+            p.isAlive = true
+            p.eliminatedRound = undefined
+          })
+          if (data?.question) gameState.currentQuestion = data.question
+          if (data?.ruleMode) gameState.ruleMode = data.ruleMode
+          const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+          gameState.timeLimit = limit
+          if (data?.autoStartVoting !== false) {
+            gameState.phase = 'voting'
+            gameState.votingDeadline = Date.now() + limit * 1000
+            gameState.timeLeft = limit
+          } else {
+            gameState.phase = 'question'
+            gameState.votingDeadline = null
+            gameState.timeLeft = limit
+          }
+          broadcastState()
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+            roundNumber: 1,
+            question: gameState.currentQuestion,
+            timeLimit: gameState.timeLimit,
+            votingDeadline: gameState.votingDeadline,
+          })
+          if (callback) callback({ success: true, phase: gameState.phase })
+        } catch (err: any) {
+          if (callback) callback({ success: false, error: err.message })
+        }
+      })
+
+      socket.on('admin:start_voting', (data, callback) => {
+        const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+        gameState.phase = 'voting'
+        gameState.timeLimit = limit
+        gameState.votingDeadline = Date.now() + limit * 1000
+        gameState.timeLeft = limit
+        gameState.isPaused = false
+        gameState.votes = {}
+        broadcastState()
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('admin:end_voting', (_data, callback) => {
+        gameState.phase = 'revealing'
+        gameState.timeLeft = 3
+        gameState.isPaused = false
+        broadcastState()
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('admin:next_round', (data, callback) => {
+        gameState.roundNumber += 1
+        gameState.votes = {}
+        gameState.currentResult = null
+        if (data?.question) gameState.currentQuestion = data.question
+        const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
+        gameState.timeLimit = limit
+        gameState.phase = 'voting'
+        gameState.votingDeadline = Date.now() + limit * 1000
+        gameState.timeLeft = limit
+        broadcastState()
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+          roundNumber: gameState.roundNumber,
+          question: gameState.currentQuestion,
+          timeLimit: gameState.timeLimit,
+          votingDeadline: gameState.votingDeadline,
+        })
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('admin:pause_game', () => {
+        gameState.isPaused = true
+        broadcastState()
+      })
+
+      socket.on('admin:resume_game', () => {
+        gameState.isPaused = false
+        if (gameState.phase === 'voting' && gameState.timeLeft > 0) {
+          gameState.votingDeadline = Date.now() + gameState.timeLeft * 1000
+        }
+        broadcastState()
+      })
+
+      socket.on('admin:sync', (updates) => {
+        applyAdminSync(updates)
+      })
+
+      socket.on('admin:reset_game', (callback) => {
+        gameState.phase = 'lobby'
+        gameState.roundNumber = 0
+        gameState.currentQuestion = null
+        gameState.currentResult = null
+        gameState.isGameOver = false
+        gameState.soleWinnerId = null
+        gameState.isPaused = false
+        gameState.votes = {}
+        gameState.players.forEach((p) => {
+          p.status = 'alive'
+          p.isAlive = true
+          p.eliminatedRound = undefined
+        })
+        broadcastState()
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('admin:clear_all_players', (callback) => {
+        gameState.phase = 'lobby'
+        gameState.roundNumber = 0
+        gameState.currentQuestion = null
+        gameState.currentResult = null
+        gameState.isGameOver = false
+        gameState.soleWinnerId = null
+        gameState.players = []
+        gameState.votes = {}
+        broadcastState()
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:reset')
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('chat:send', (data) => {
+        const { nickname, message } = data || {}
+        if (nickname && message) {
+          const msg = {
+            id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            nickname,
+            message,
+            timestamp: Date.now(),
+          }
+          gameState.chatMessages.push(msg)
+          if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+        }
+      })
+    })
+  }
+
   return {
     name: 'game-sync-plugin',
     configureServer(server) {
       server.middlewares.use(handler)
+      if (server.httpServer) {
+        setupSocketIO(server.httpServer)
+      }
     },
     configurePreviewServer(server) {
       server.middlewares.use(handler)
+      if (server.httpServer) {
+        setupSocketIO(server.httpServer)
+      }
     },
   }
 }
