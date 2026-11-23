@@ -4,12 +4,15 @@ import { getFirestore } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
 import type { Player, GameState } from './types/game'
 
+const rawDbUrl = (
+  import.meta.env.VITE_FIREBASE_DATABASE_URL ||
+  'https://the-last-two-game-default-rtdb.firebaseio.com'
+).trim().replace(/\/+$/, '')
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyA_the_last_two_game_key',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'the-last-two-game.firebaseapp.com',
-  databaseURL:
-    import.meta.env.VITE_FIREBASE_DATABASE_URL ||
-    'https://the-last-two-game-default-rtdb.firebaseio.com',
+  databaseURL: rawDbUrl,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'the-last-two-game',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'the-last-two-game.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789',
