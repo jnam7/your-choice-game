@@ -132,7 +132,7 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       }
 
       // 2. Zustand 스토어에 즉시 등록
-      addPlayer(trimmed)
+      addPlayer(trimmed, localId)
 
       // 3. 로컬 참가자 객체 생성 후 onJoin 즉시 호출하여 대기실(WaitingRoom) 화면으로 즉시 전환
       const newPlayer: Player = {

@@ -69,6 +69,16 @@ function broadcastState() {
   ioInstance.emit('state:sync', gameState)
 }
 
+function broadcastPlayerJoined(player: Player) {
+  if (!ioInstance) return
+  ioInstance.to(SOCKET_ROOM_MAIN).emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  ioInstance.to(SOCKET_ROOM_MAIN).emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  ioInstance.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+  ioInstance.emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  ioInstance.emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  ioInstance.emit('players:update', gameState.players)
+}
+
 function parseJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve) => {
     if ((req as any).body) {
@@ -195,7 +205,8 @@ export function syncPlugin(): Plugin {
       }
 
       broadcastState()
-      sendJson(res, 200, { success: true, player })
+      broadcastPlayerJoined(player)
+      sendJson(res, 200, { success: true, player, players: gameState.players })
       return
     }
 
@@ -374,7 +385,8 @@ export function syncPlugin(): Plugin {
             player.isAlive = true
           }
           broadcastState()
-          if (callback) callback({ success: true, player })
+          broadcastPlayerJoined(player)
+          if (callback) callback({ success: true, player, players: gameState.players })
         } catch (e: any) {
           if (callback) callback({ success: false, error: e.message })
         }

@@ -46,10 +46,13 @@ export function useFirebaseSync() {
         })
       },
       onPlayers: (playersList: Player[]) => {
-        if (!playersList) return
-        // Firebase의 플레이어 목록으로 상태를 즉시 동기화
+        if (!playersList || playersList.length === 0) return
+        const currentPlayers = useGameStore.getState().players
+        const map = new Map<string, Player>()
+        for (const p of currentPlayers) map.set(p.id, p)
+        for (const p of playersList) map.set(p.id, p)
         syncWithServer({
-          players: playersList,
+          players: Array.from(map.values()),
         })
       },
       onVotes: (votesMap: Record<string, 'A' | 'B'>) => {
@@ -74,6 +77,13 @@ export function useFirebaseSync() {
         calculatedTimeLeft = remainingSec
       }
 
+      const incomingPlayers: Player[] = Array.isArray(serverState.players) ? serverState.players : []
+      const cur = useGameStore.getState().players
+      const map = new Map<string, Player>()
+      for (const p of cur) map.set(p.id, p)
+      for (const p of incomingPlayers) map.set(p.id, p)
+      const resolvedPlayers = incomingPlayers.length > 0 ? Array.from(map.values()) : (cur.length > 0 ? cur : [])
+
       syncWithServer({
         phase: serverState.phase,
         roundNumber: serverState.roundNumber,
@@ -89,7 +99,7 @@ export function useFirebaseSync() {
         timeLimit: serverState.timeLimit || 15,
         votingDeadline: serverState.votingDeadline,
         timeLeft: calculatedTimeLeft,
-        players: serverState.players || [],
+        players: resolvedPlayers,
         votes: serverState.votes || {},
       })
     }
@@ -131,9 +141,32 @@ export function useFirebaseSync() {
       fetchLatestState()
     }
 
+    const handlePlayersUpdate = (data: any) => {
+      if (!data) return
+      let incomingList: Player[] = []
+      if (Array.isArray(data)) {
+        incomingList = data
+      } else if (data.players && Array.isArray(data.players)) {
+        incomingList = data.players
+      } else if (data.player) {
+        incomingList = [data.player]
+      }
+
+      if (incomingList.length > 0) {
+        const cur = useGameStore.getState().players
+        const map = new Map<string, Player>()
+        for (const p of cur) map.set(p.id, p)
+        for (const p of incomingList) map.set(p.id, p)
+        syncWithServer({ players: Array.from(map.values()) })
+      }
+    }
+
     socket.on('connect', handleConnect)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
+    socket.on('game:player_joined', handlePlayersUpdate)
+    socket.on('player:joined', handlePlayersUpdate)
+    socket.on('players:update', handlePlayersUpdate)
     socket.on('game:round_started', handleRoundStarted)
     socket.on('game:force_lobby', handleForceLobby)
     socket.on('game:set_reset', handleForceLobby)
@@ -184,6 +217,9 @@ export function useFirebaseSync() {
       socket.off('connect', handleConnect)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
+      socket.off('game:player_joined', handlePlayersUpdate)
+      socket.off('player:joined', handlePlayersUpdate)
+      socket.off('players:update', handlePlayersUpdate)
       socket.off('game:round_started', handleRoundStarted)
       socket.off('game:force_lobby', handleForceLobby)
       socket.off('game:set_reset', handleForceLobby)

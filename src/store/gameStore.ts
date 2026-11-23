@@ -301,16 +301,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       persist()
     },
 
-    addPlayer: (nickname: string) => {
+    addPlayer: (nickname: string, existingId?: string) => {
       const existing = get().players.find((p) => p.nickname === nickname)
-      const id = existing ? existing.id : generateId()
+      const id = existing ? existing.id : (existingId || generateId())
 
       const newPlayer: Player = { id, nickname, status: 'alive' as const, joinedAt: Date.now() }
 
       set((state) => {
         const alreadyInList = state.players.some((p) => p.id === id || p.nickname === nickname)
         const updatedList = alreadyInList
-          ? state.players
+          ? state.players.map((p) => (p.nickname === nickname ? { ...p, id, status: 'alive' as const } : p))
           : [...state.players, newPlayer]
         return {
           players: updatedList,

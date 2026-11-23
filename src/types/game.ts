@@ -105,7 +105,7 @@ export interface GameState {
 
 export interface GameActions {
   // 플레이어 관리
-  addPlayer: (nickname: string) => string
+  addPlayer: (nickname: string, existingId?: string) => string
   setPlayers?: (players: Player[]) => void
   removePlayer: (id: string) => void
   addMockPlayers: (count: number) => void

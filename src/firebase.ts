@@ -205,62 +205,61 @@ export function listenFirebaseGame(callbacks: {
 }) {
   const unsubs: (() => void)[] = []
 
-  // 1. Firebase RTDB state 리스너
-  try {
-    const stateRef = ref(rtdb, RTDB_PATHS.STATE)
-    const stateUnsub = onValue(
-      stateRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        if (val && callbacks.onState) {
-          callbacks.onState(val)
-        }
-      },
-      (error) => {
-        // 권한/연결 실패 시 로컬 브로드캐스트로 자동 대체
-      }
-    )
-    unsubs.push(() => off(stateRef, 'value', stateUnsub))
-  } catch (e) {}
-
-  // 2. Firebase RTDB players 리스너
-  try {
-    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
-    const playersUnsub = onValue(
-      playersRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        if (callbacks.onPlayers) {
-          if (!val) {
-            callbacks.onPlayers([])
-          } else if (Array.isArray(val)) {
-            callbacks.onPlayers(val.filter(Boolean))
-          } else if (typeof val === 'object') {
-            const list: Player[] = Object.values(val)
-            callbacks.onPlayers(list)
+  // 실제 유효한 Firebase API Key가 설정되어 있을 때만 RTDB 원격 리스너 가동
+  if (isFirebaseConfigured()) {
+    // 1. Firebase RTDB state 리스너
+    try {
+      const stateRef = ref(rtdb, RTDB_PATHS.STATE)
+      const stateUnsub = onValue(
+        stateRef,
+        (snapshot) => {
+          const val = snapshot.val()
+          if (val && callbacks.onState) {
+            callbacks.onState(val)
           }
-        }
-      },
-      (error) => {}
-    )
-    unsubs.push(() => off(playersRef, 'value', playersUnsub))
-  } catch (e) {}
+        },
+        () => {}
+      )
+      unsubs.push(() => off(stateRef, 'value', stateUnsub))
+    } catch (e) {}
 
-  // 3. Firebase RTDB votes 리스너
-  try {
-    const votesRef = ref(rtdb, RTDB_PATHS.VOTES)
-    const votesUnsub = onValue(
-      votesRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        if (callbacks.onVotes) {
-          callbacks.onVotes(val || {})
-        }
-      },
-      (error) => {}
-    )
-    unsubs.push(() => off(votesRef, 'value', votesUnsub))
-  } catch (e) {}
+    // 2. Firebase RTDB players 리스너
+    try {
+      const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
+      const playersUnsub = onValue(
+        playersRef,
+        (snapshot) => {
+          const val = snapshot.val()
+          if (callbacks.onPlayers && val) {
+            if (Array.isArray(val)) {
+              callbacks.onPlayers(val.filter(Boolean))
+            } else if (typeof val === 'object') {
+              const list: Player[] = Object.values(val)
+              callbacks.onPlayers(list)
+            }
+          }
+        },
+        () => {}
+      )
+      unsubs.push(() => off(playersRef, 'value', playersUnsub))
+    } catch (e) {}
+
+    // 3. Firebase RTDB votes 리스너
+    try {
+      const votesRef = ref(rtdb, RTDB_PATHS.VOTES)
+      const votesUnsub = onValue(
+        votesRef,
+        (snapshot) => {
+          const val = snapshot.val()
+          if (callbacks.onVotes && val) {
+            callbacks.onVotes(val)
+          }
+        },
+        () => {}
+      )
+      unsubs.push(() => off(votesRef, 'value', votesUnsub))
+    } catch (e) {}
+  }
 
   // 4. 로컬 브로드캐스트 채널 수신 (동일 기기/브라우저 초고속 동기화)
   if (syncChannel) {
@@ -269,12 +268,13 @@ export function listenFirebaseGame(callbacks: {
       if (!data) return
       if (data.type === 'STATE_UPDATE' && callbacks.onState) {
         callbacks.onState(data.payload)
-      } else if (data.type === 'PLAYER_JOIN' && callbacks.onPlayers) {
-        // 단일 플레이어 조인 브로드캐스트
+      } else if (data.type === 'PLAYER_JOIN' && callbacks.onPlayers && data.payload) {
+        // 단일 참가자 입장 브로드캐스트 수신 시 목록 즉각 갱신
+        callbacks.onPlayers([data.payload])
       } else if (data.type === 'PLAYERS_ALL' && callbacks.onPlayers) {
         callbacks.onPlayers(data.payload)
-      } else if (data.type === 'VOTE_SUBMIT' && callbacks.onVotes) {
-        // 투표 브로드캐스트
+      } else if (data.type === 'VOTE_SUBMIT' && callbacks.onVotes && data.payload?.playerId) {
+        callbacks.onVotes({ [data.payload.playerId]: data.payload.choice } as any)
       }
     }
     syncChannel.addEventListener('message', handleChannelMsg)

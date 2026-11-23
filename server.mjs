@@ -94,6 +94,15 @@ function broadcastState() {
   io.emit('state:sync', gameState)
 }
 
+function broadcastPlayerJoined(player) {
+  io.to(SOCKET_ROOM_MAIN).emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  io.to(SOCKET_ROOM_MAIN).emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+  io.emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  io.emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
+  io.emit('players:update', gameState.players)
+}
+
 function applyAdminSync(updates) {
   if (updates && typeof updates === 'object') {
     const { players: incomingPlayers, ...safeUpdates } = updates
@@ -171,7 +180,8 @@ io.on('connection', (socket) => {
       }
 
       broadcastState()
-      if (callback) callback({ success: true, player })
+      broadcastPlayerJoined(player)
+      if (callback) callback({ success: true, player, players: gameState.players })
     } catch (e) {
       console.error('[player:join Error]', e)
     }
@@ -656,7 +666,8 @@ app.post('/api/join', (req, res) => {
       console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
     }
     broadcastState()
-    res.json({ success: true, player })
+    broadcastPlayerJoined(player)
+    res.json({ success: true, player, players: gameState.players })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
@@ -706,7 +717,8 @@ app.post('/api/game/join', (req, res) => {
       console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
     }
     broadcastState()
-    res.json({ success: true, player })
+    broadcastPlayerJoined(player)
+    res.json({ success: true, player, players: gameState.players })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
