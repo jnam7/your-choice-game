@@ -166,6 +166,12 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
           }
         })
         .catch(() => {})
+
+      fetch('/api/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: localId, nickname: trimmed }),
+      }).catch(() => {})
     } catch (err) {
       console.error('[NicknameForm handleSubmit error]', err)
     } finally {
@@ -244,17 +250,43 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
 
 // ===== 대기실 =====
 function WaitingRoom({
+  player,
   onNicknameChange,
   onRejoin,
 }: {
+  player?: Player
   onNicknameChange?: (newNick: string) => void
   onRejoin?: () => void
 }) {
-  const { players, currentPlayerId, phase, changeNickname } = useGameStore()
-  const currentPlayer = players.find((p) => p.id === currentPlayerId)
+  const players = useGameStore((s) => s.players)
+  const currentPlayerId = useGameStore((s) => s.currentPlayerId)
+  const phase = useGameStore((s) => s.phase)
+  const changeNickname = useGameStore((s) => s.changeNickname)
+
+  const currentPlayer = players.find((p) => p.id === currentPlayerId) || player
   const [isEditing, setIsEditing] = useState(false)
   const [editInput, setEditInput] = useState(currentPlayer?.nickname || '')
   const [editError, setEditError] = useState('')
+
+  // 대기실 체류 중 서버에 지속적 하트비트 등록 (관리자/TV에 접속 카운트 100% 누락 방지)
+  useEffect(() => {
+    const localId = currentPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+    const localNick = currentPlayer?.nickname || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null)
+    if (!localId || !localNick) return
+
+    const ensureRegistered = () => {
+      socket.emit('player:join', { id: localId, nickname: localNick })
+      fetch('/api/game/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: localId, nickname: localNick }),
+      }).catch(() => {})
+    }
+
+    ensureRegistered()
+    const timer = setInterval(ensureRegistered, 3000)
+    return () => clearInterval(timer)
+  }, [currentPlayer?.id, currentPlayer?.nickname])
 
   const handleSaveNickname = (e: React.FormEvent) => {
     e.preventDefault()
@@ -1227,6 +1259,7 @@ export default function PlayerPage() {
     if (phase === 'lobby') {
       return (
         <WaitingRoom
+          player={myPlayer || undefined}
           onNicknameChange={(newNick) => {
             if (myPlayer) setMyPlayer({ ...myPlayer, nickname: newNick })
           }}

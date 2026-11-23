@@ -170,6 +170,12 @@ export function syncPlugin(): Plugin {
       return
     }
 
+    // 1-1. 참가자 목록 조회
+    if (req.method === 'GET' && (url === '/api/players' || url === '/api/game/players')) {
+      sendJson(res, 200, { success: true, count: gameState.players.length, players: gameState.players })
+      return
+    }
+
     // 2. 서버 정보 조회
     if (req.method === 'GET' && url === '/api/server-info') {
       sendJson(res, 200, { publicUrl: gameState.serverHostUrl || '' })

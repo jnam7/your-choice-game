@@ -6,7 +6,7 @@ import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
 import { exportGameResultsToExcel } from '../utils/excelExport'
-import type { Question } from '../types/game'
+import type { Question, Player, ChatMessage } from '../types/game'
 
 // ===== 로고 =====
 function Logo() {
@@ -58,17 +58,76 @@ export default function AdminPage() {
   // 실시간 Firebase 및 상태 복원 동기화
   useFirebaseSync()
 
-  const store = useGameStore()
-  const {
-    phase, players, roundNumber, currentQuestion, votes,
-    currentResult, roundResults, isFinals, isPaused, timeLimit,
-    votingDeadline, timeLeft, ruleMode, setRuleMode,
-    questionsList, addQuestionItem, updateQuestionItem, deleteQuestionItem, resetQuestionsToDefault,
-    addMockPlayers, startGame, startVoting, endVoting, revealResult,
-    nextRound, resetGame, clearAllPlayers, pauseGame, resumeGame, forceEndGame,
-    setTimeLimit, enterFinals, simulateVotes, soleWinnerId, serverHostUrl, setServerHostUrl,
-    qrMode, setQrMode,
-  } = store
+  // Zustand 원자적 선택자를 통한 실시간 반응성 100% 보장 (참가자 입장 및 phase 변경 즉각 리렌더링)
+  const phase = useGameStore((s) => s.phase)
+  const players = useGameStore((s) => s.players)
+  const roundNumber = useGameStore((s) => s.roundNumber)
+  const currentQuestion = useGameStore((s) => s.currentQuestion)
+  const votes = useGameStore((s) => s.votes)
+  const currentResult = useGameStore((s) => s.currentResult)
+  const roundResults = useGameStore((s) => s.roundResults)
+  const isFinals = useGameStore((s) => s.isFinals)
+  const isPaused = useGameStore((s) => s.isPaused)
+  const timeLimit = useGameStore((s) => s.timeLimit)
+  const votingDeadline = useGameStore((s) => s.votingDeadline)
+  const timeLeft = useGameStore((s) => s.timeLeft)
+  const ruleMode = useGameStore((s) => s.ruleMode)
+  const setRuleMode = useGameStore((s) => s.setRuleMode)
+  const questionsList = useGameStore((s) => s.questionsList)
+  const addQuestionItem = useGameStore((s) => s.addQuestionItem)
+  const updateQuestionItem = useGameStore((s) => s.updateQuestionItem)
+  const deleteQuestionItem = useGameStore((s) => s.deleteQuestionItem)
+  const resetQuestionsToDefault = useGameStore((s) => s.resetQuestionsToDefault)
+  const addMockPlayers = useGameStore((s) => s.addMockPlayers)
+  const startGame = useGameStore((s) => s.startGame)
+  const startVoting = useGameStore((s) => s.startVoting)
+  const endVoting = useGameStore((s) => s.endVoting)
+  const revealResult = useGameStore((s) => s.revealResult)
+  const nextRound = useGameStore((s) => s.nextRound)
+  const resetGame = useGameStore((s) => s.resetGame)
+  const clearAllPlayers = useGameStore((s) => s.clearAllPlayers)
+  const pauseGame = useGameStore((s) => s.pauseGame)
+  const resumeGame = useGameStore((s) => s.resumeGame)
+  const forceEndGame = useGameStore((s) => s.forceEndGame)
+  const setTimeLimit = useGameStore((s) => s.setTimeLimit)
+  const enterFinals = useGameStore((s) => s.enterFinals)
+  const simulateVotes = useGameStore((s) => s.simulateVotes)
+  const soleWinnerId = useGameStore((s) => s.soleWinnerId)
+  const serverHostUrl = useGameStore((s) => s.serverHostUrl)
+  const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
+  const qrMode = useGameStore((s) => s.qrMode)
+  const setQrMode = useGameStore((s) => s.setQrMode)
+  const chatMessages = useGameStore((s) => s.chatMessages)
+  const clearChatMessages = useGameStore((s) => s.clearChatMessages)
+
+  // 관리자 화면 참가자 입장/갱신 이벤트 직결 수신
+  useEffect(() => {
+    const handlePlayersUpdate = (data: any) => {
+      if (!data) return
+      let list: Player[] = []
+      if (Array.isArray(data)) list = data
+      else if (data.players && Array.isArray(data.players)) list = data.players
+      else if (data.player) list = [data.player]
+
+      if (list.length > 0) {
+        const cur = useGameStore.getState().players
+        const map = new Map<string, Player>()
+        for (const p of cur) map.set(p.id, p)
+        for (const p of list) map.set(p.id, p)
+        useGameStore.getState().syncWithServer({ players: Array.from(map.values()) })
+      }
+    }
+
+    socket.on('game:player_joined', handlePlayersUpdate)
+    socket.on('player:joined', handlePlayersUpdate)
+    socket.on('players:update', handlePlayersUpdate)
+
+    return () => {
+      socket.off('game:player_joined', handlePlayersUpdate)
+      socket.off('player:joined', handlePlayersUpdate)
+      socket.off('players:update', handlePlayersUpdate)
+    }
+  }, [])
 
   const [activeTab, setActiveTab] = useState<'control' | 'questions'>('control')
   const [mockCount, setMockCount] = useState(20)
@@ -988,23 +1047,23 @@ export default function AdminPage() {
               <div className="flex items-center justify-between mb-2 pb-2 border-b border-gold/10">
                 <h3 className="font-display text-sm text-gold flex items-center gap-1.5">
                   <span>💬 실시간 응원톡</span>
-                  <span className="text-xs text-gray-400 font-mono">({store.chatMessages.length})</span>
+                  <span className="text-xs text-gray-400 font-mono">({chatMessages.length})</span>
                 </h3>
                 <button
-                  onClick={() => store.clearChatMessages()}
+                  onClick={() => clearChatMessages()}
                   className="text-[11px] text-gray-400 hover:text-red-400 underline"
                 >
                   채팅 비우기
                 </button>
               </div>
               <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 text-xs">
-                {store.chatMessages.map((msg) => (
+                {chatMessages.map((msg: ChatMessage) => (
                   <div key={msg.id} className="bg-navy-dark/80 px-2.5 py-1.5 rounded border border-gold/10">
                     <span className="text-gold font-bold mr-1.5">{msg.nickname}:</span>
                     <span className="text-gray-200">{msg.message}</span>
                   </div>
                 ))}
-                {store.chatMessages.length === 0 && (
+                {chatMessages.length === 0 && (
                   <p className="text-gray-500 text-center py-4">등록된 메시지가 없습니다.</p>
                 )}
               </div>

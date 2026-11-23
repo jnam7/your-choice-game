@@ -564,6 +564,14 @@ app.get('/api/game/state', (req, res) => {
   res.json(gameState)
 })
 
+app.get('/api/players', (req, res) => {
+  res.json({ success: true, count: gameState.players.length, players: gameState.players })
+})
+
+app.get('/api/game/players', (req, res) => {
+  res.json({ success: true, count: gameState.players.length, players: gameState.players })
+})
+
 app.post('/api/game/start', (req, res) => {
   try {
     const data = req.body || {}

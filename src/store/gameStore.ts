@@ -348,6 +348,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         })
         .catch(() => {})
 
+      fetch('/api/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, nickname }),
+      }).catch(() => {})
+
       return id
     },
 

@@ -79,10 +79,36 @@ export function useFirebaseSync() {
 
       const incomingPlayers: Player[] = Array.isArray(serverState.players) ? serverState.players : []
       const cur = useGameStore.getState().players
-      const map = new Map<string, Player>()
-      for (const p of cur) map.set(p.id, p)
-      for (const p of incomingPlayers) map.set(p.id, p)
-      const resolvedPlayers = incomingPlayers.length > 0 ? Array.from(map.values()) : (cur.length > 0 ? cur : [])
+
+      // 관리자 또는 TV 화면인 경우 서버의 플레이어 목록을 100% 진실의 원천으로 반영
+      const isConsole = typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))
+
+      let resolvedPlayers: Player[] = []
+      if (isConsole) {
+        resolvedPlayers = incomingPlayers
+      } else {
+        // 스마트폰 참가자 화면: 서버 목록을 우선하되, 로컬에서 등록한 본인 정보 누락 시 안전 보존 및 자동 재등록
+        const map = new Map<string, Player>()
+        for (const p of incomingPlayers) map.set(p.id, p)
+        for (const p of cur) {
+          if (!map.has(p.id)) map.set(p.id, p)
+        }
+        resolvedPlayers = Array.from(map.values())
+
+        const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+        const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+        if (mySavedId && mySavedNick) {
+          const inServer = incomingPlayers.some((p) => p.id === mySavedId || p.nickname === mySavedNick)
+          if (!inServer) {
+            socket.emit('player:join', { id: mySavedId, nickname: mySavedNick })
+            fetch('/api/game/join', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: mySavedId, nickname: mySavedNick }),
+            }).catch(() => {})
+          }
+        }
+      }
 
       syncWithServer({
         phase: serverState.phase,
@@ -144,15 +170,22 @@ export function useFirebaseSync() {
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
       let incomingList: Player[] = []
+      let isFullList = false
       if (Array.isArray(data)) {
         incomingList = data
+        isFullList = true
       } else if (data.players && Array.isArray(data.players)) {
         incomingList = data.players
+        isFullList = true
       } else if (data.player) {
         incomingList = [data.player]
       }
 
-      if (incomingList.length > 0) {
+      const isConsole = typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))
+
+      if (isFullList && isConsole) {
+        syncWithServer({ players: incomingList })
+      } else if (incomingList.length > 0) {
         const cur = useGameStore.getState().players
         const map = new Map<string, Player>()
         for (const p of cur) map.set(p.id, p)

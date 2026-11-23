@@ -169,9 +169,43 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
 
 // ===== 1. TV 로비 (QR & 접속자 카운트) =====
 function TVLobby() {
-  const { players, serverHostUrl, setServerHostUrl, qrMode, setQrMode } = useGameStore()
+  const players = useGameStore((s) => s.players)
+  const serverHostUrl = useGameStore((s) => s.serverHostUrl)
+  const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
+  const qrMode = useGameStore((s) => s.qrMode)
+  const setQrMode = useGameStore((s) => s.setQrMode)
+
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
+
+  // TV 로비 참가자 실시간 카운트/목록 이벤트 직결 수신
+  useEffect(() => {
+    const handlePlayersUpdate = (data: any) => {
+      if (!data) return
+      let list: any[] = []
+      if (Array.isArray(data)) list = data
+      else if (data.players && Array.isArray(data.players)) list = data.players
+      else if (data.player) list = [data.player]
+
+      if (list.length > 0) {
+        const cur = useGameStore.getState().players
+        const map = new Map<string, any>()
+        for (const p of cur) map.set(p.id, p)
+        for (const p of list) map.set(p.id, p)
+        useGameStore.getState().syncWithServer({ players: Array.from(map.values()) })
+      }
+    }
+
+    socket.on('game:player_joined', handlePlayersUpdate)
+    socket.on('player:joined', handlePlayersUpdate)
+    socket.on('players:update', handlePlayersUpdate)
+
+    return () => {
+      socket.off('game:player_joined', handlePlayersUpdate)
+      socket.off('player:joined', handlePlayersUpdate)
+      socket.off('players:update', handlePlayersUpdate)
+    }
+  }, [])
 
   const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
@@ -481,7 +515,15 @@ function TVQuestion() {
 
 // ===== 3. TV 투표 진행 (15초 초대형 카운트다운) =====
 function TVVoting() {
-  const { currentQuestion, votes, players, endVoting, roundNumber, isFinals, timeLimit, votingDeadline, ruleMode } = useGameStore()
+  const currentQuestion = useGameStore((s) => s.currentQuestion)
+  const votes = useGameStore((s) => s.votes)
+  const players = useGameStore((s) => s.players)
+  const endVoting = useGameStore((s) => s.endVoting)
+  const roundNumber = useGameStore((s) => s.roundNumber)
+  const isFinals = useGameStore((s) => s.isFinals)
+  const timeLimit = useGameStore((s) => s.timeLimit)
+  const votingDeadline = useGameStore((s) => s.votingDeadline)
+  const ruleMode = useGameStore((s) => s.ruleMode)
   const alivePlayers = players.filter((p) => p.status === 'alive')
   const voteCount = Object.keys(votes).length
 
@@ -660,7 +702,9 @@ function TVRevealing() {
 
 // ===== 5. TV 결과 공개 & 탈락자 연출 (RESULT) =====
 function TVResult() {
-  const { currentResult, players, roundNumber } = useGameStore()
+  const currentResult = useGameStore((s) => s.currentResult)
+  const players = useGameStore((s) => s.players)
+  const roundNumber = useGameStore((s) => s.roundNumber)
   const [showBars, setShowBars] = useState(false)
   const [showEliminated, setShowEliminated] = useState(false)
 
@@ -852,7 +896,7 @@ function TVResult() {
 
 // ===== 6. TV 게임 오버 및 최종 우승 연출 (GAMEOVER) =====
 function TVGameOver() {
-  const { players } = useGameStore()
+  const players = useGameStore((s) => s.players)
   const winners = players.filter((p) => p.status === 'alive')
 
   // 우승 축하 팡파르 효과음
@@ -965,7 +1009,11 @@ export default function TVPage() {
   // 실시간 Firebase 및 상태 복원 동기화
   useFirebaseSync()
 
-  const { phase, serverHostUrl, setServerHostUrl, qrMode } = useGameStore()
+  const phase = useGameStore((s) => s.phase)
+  const players = useGameStore((s) => s.players)
+  const serverHostUrl = useGameStore((s) => s.serverHostUrl)
+  const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
+  const qrMode = useGameStore((s) => s.qrMode)
 
   // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락
   useEffect(() => {
