@@ -134,6 +134,13 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         localStorage.setItem('lasttwo_player_nickname', trimmed)
       }
 
+      // 1-1. 스토어 상태에 플레이어 즉시 반영 (참가자 수 즉각 렌더링 및 0명 방지)
+      const curPlayers = useGameStore.getState().players
+      if (!curPlayers.some((p) => p.id === localId)) {
+        useGameStore.getState().syncWithServer({ players: [...curPlayers, newPlayer] })
+      }
+      useGameStore.getState().setCurrentPlayer(localId)
+
       // 2. [비동기 멈춤 100% 방지] 클릭 즉시 onJoin 호출하여 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
       onJoin(newPlayer)
 
@@ -245,6 +252,9 @@ function WaitingRoom({
   onNicknameChange?: (newNick: string) => void
   onLeave?: () => void
 }) {
+  // 실시간 웹소켓 및 Firebase 상태 동기화 (TVPage와 동일하게 대기실 최상단에서 직접 구독)
+  useFirebaseSync()
+
   const players = useGameStore((s) => s.players)
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
   const phase = useGameStore((s) => s.phase)
@@ -254,6 +264,11 @@ function WaitingRoom({
   const [isEditing, setIsEditing] = useState(false)
   const [editInput, setEditInput] = useState(currentPlayer?.nickname || '')
   const [editError, setEditError] = useState('')
+
+  // 실시간 참가자 수 계산: Firebase 및 서버 players 실시간 반영 + 본인 누락 방지
+  const effectiveMyId = currentPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+  const hasMe = effectiveMyId ? players.some((p) => p.id === effectiveMyId) : false
+  const activeCount = players.length > 0 ? (hasMe ? players.length : players.length + 1) : 1
 
   // 대기실 체류 중 서버에 지속적 하트비트 등록 (관리자/TV에 접속 카운트 100% 누락 방지)
   useEffect(() => {
@@ -406,7 +421,7 @@ function WaitingRoom({
 
         <div className="bg-navy-dark rounded-xl p-4 mb-4">
           <p className="text-gold text-sm mb-1">현재 접속 참가자</p>
-          <p className="font-display text-4xl text-white">{players.length}명</p>
+          <p className="font-display text-4xl text-white">{activeCount}명</p>
         </div>
 
         <motion.div

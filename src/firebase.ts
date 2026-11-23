@@ -251,10 +251,8 @@ export function listenFirebaseGame(callbacks: {
       (snapshot) => {
         const val = snapshot.val()
         console.log('📡 [Firebase RTDB Players 수신]:', val ? Object.keys(val).length : 0, '명')
-        if (callbacks.onPlayers) {
-          if (!val) {
-            callbacks.onPlayers([])
-          } else if (Array.isArray(val)) {
+        if (callbacks.onPlayers && val) {
+          if (Array.isArray(val)) {
             callbacks.onPlayers(val.filter(Boolean))
           } else if (typeof val === 'object') {
             const list: Player[] = Object.values(val)

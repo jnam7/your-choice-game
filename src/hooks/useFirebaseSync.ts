@@ -46,14 +46,14 @@ export function useFirebaseSync() {
         })
       },
       onPlayers: (playersList: Player[]) => {
-        const validList = Array.isArray(playersList) ? playersList : []
+        if (!Array.isArray(playersList) || playersList.length === 0) return
         const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
         const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
-        let finalList = validList
-        if (mySavedId && mySavedNick && !validList.some((p) => p.id === mySavedId)) {
+        let finalList = playersList
+        if (mySavedId && mySavedNick && !playersList.some((p) => p.id === mySavedId)) {
           finalList = [
-            ...validList,
+            ...playersList,
             { id: mySavedId, nickname: mySavedNick, status: 'alive', joinedAt: Date.now() },
           ]
         }
@@ -87,35 +87,33 @@ export function useFirebaseSync() {
       const incomingPlayers: Player[] = Array.isArray(serverState.players) ? serverState.players : []
       const cur = useGameStore.getState().players
 
-      // 관리자 또는 TV 화면인 경우 서버의 플레이어 목록을 100% 진실의 원천으로 반영
-      const isConsole = typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))
-
       let resolvedPlayers: Player[] = []
-      if (isConsole || serverState.phase === 'lobby') {
+      if (incomingPlayers.length > 0) {
         resolvedPlayers = incomingPlayers
       } else {
-        // 스마트폰 참가자 화면: 서버 목록을 우선하되, 로컬에서 등록한 본인 정보 누락 시 안전 보존
-        const map = new Map<string, Player>()
-        for (const p of incomingPlayers) map.set(p.id, p)
-        for (const p of cur) {
-          if (!map.has(p.id)) map.set(p.id, p)
-        }
-        resolvedPlayers = Array.from(map.values())
+        resolvedPlayers = cur
+      }
 
-        // 게임 진행 중(question 또는 voting)에만 튕김 방지용 자동 재등록 허용
-        const isGamePlaying = serverState.phase === 'question' || serverState.phase === 'voting'
-        const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-        const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
-        if (isGamePlaying && mySavedId && mySavedNick) {
-          const inServer = incomingPlayers.some((p) => p.id === mySavedId || p.nickname === mySavedNick)
-          if (!inServer) {
-            socket.emit('player:join', { id: mySavedId, nickname: mySavedNick })
-            fetch('/api/game/join', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id: mySavedId, nickname: mySavedNick }),
-            }).catch(() => {})
-          }
+      const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+      const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+      if (mySavedId && mySavedNick && !resolvedPlayers.some((p) => p.id === mySavedId)) {
+        resolvedPlayers = [
+          ...resolvedPlayers,
+          { id: mySavedId, nickname: mySavedNick, status: 'alive', joinedAt: Date.now() },
+        ]
+      }
+
+      // 게임 진행 중(question 또는 voting)에만 튕김 방지용 자동 재등록 허용
+      const isGamePlaying = serverState.phase === 'question' || serverState.phase === 'voting'
+      if (isGamePlaying && mySavedId && mySavedNick) {
+        const inServer = incomingPlayers.some((p) => p.id === mySavedId || p.nickname === mySavedNick)
+        if (!inServer) {
+          socket.emit('player:join', { id: mySavedId, nickname: mySavedNick })
+          fetch('/api/game/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: mySavedId, nickname: mySavedNick }),
+          }).catch(() => {})
         }
       }
 
@@ -222,6 +220,19 @@ export function useFirebaseSync() {
         if (res.ok) {
           const data = await res.json()
           applyState(data)
+        }
+      } catch (e) {}
+
+      try {
+        let pRes = await fetch('/api/game/players')
+        if (!pRes.ok) {
+          pRes = await fetch('/api/players')
+        }
+        if (pRes.ok) {
+          const pData = await pRes.json()
+          if (pData?.players && Array.isArray(pData.players) && pData.players.length > 0) {
+            handlePlayersUpdate({ players: pData.players })
+          }
         }
       } catch (e) {}
     }
