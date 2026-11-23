@@ -110,10 +110,10 @@ export default function AdminPage() {
       playersRef,
       (snapshot) => {
         const val = snapshot.val()
-        if (val) {
-          const list: Player[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
-          useGameStore.getState().syncWithServer({ players: list })
-        }
+        const list: Player[] = Array.isArray(val)
+          ? val.filter(Boolean)
+          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
+        useGameStore.getState().syncWithServer({ players: list })
       },
       (err) => {
         console.error('❌ [AdminPage] Firebase players onValue error:', err)
@@ -234,12 +234,14 @@ export default function AdminPage() {
   const [formOptionB, setFormOptionB] = useState('')
   const [formIsFinals, setFormIsFinals] = useState(false)
 
-  const alivePlayers = (phase === 'result' || phase === 'elimination') && currentResult?.survivors
-    ? players.filter((p) => currentResult.survivors.includes(p.id))
-    : players.filter((p) => p.status === 'alive')
-  const eliminatedPlayers = (phase === 'result' || phase === 'elimination') && currentResult?.survivors
-    ? players.filter((p) => !currentResult.survivors.includes(p.id))
-    : players.filter((p) => p.status === 'eliminated')
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
+
+  const alivePlayers = (phase === 'result' || phase === 'elimination') && currentResult?.survivors && Array.isArray(currentResult.survivors)
+    ? playerList.filter((p) => p && currentResult.survivors.includes(p.id))
+    : playerList.filter((p) => p && p.status === 'alive')
+  const eliminatedPlayers = (phase === 'result' || phase === 'elimination') && currentResult?.survivors && Array.isArray(currentResult.survivors)
+    ? playerList.filter((p) => p && !currentResult.survivors.includes(p.id))
+    : playerList.filter((p) => p && p.status === 'eliminated')
   const voteCount = Object.keys(votes).length
   const currentActiveUrl = adminQrTab === 'wifi' ? wifiUrl : (lteUrl || customUrlInput)
 
@@ -454,7 +456,7 @@ export default function AdminPage() {
           <div className="lg:col-span-2 space-y-5">
             {/* 통계 지표 카드 */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="총 접속 인원" value={`${players.length}/100`} icon="👥" />
+              <StatCard label="총 접속 인원" value={`${playerList.length}/100`} icon="👥" />
               <StatCard label="생존자 수" value={alivePlayers.length} icon="💚" color="text-green-400" />
               <StatCard label="탈락자 수" value={eliminatedPlayers.length} icon="💀" color="text-red-400" />
               <StatCard
@@ -1076,7 +1078,7 @@ export default function AdminPage() {
             <div className="glass-card p-5 border border-gold/20 shadow-xl">
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-gold/10">
                 <h3 className="font-display text-base text-gold">
-                  👥 참가자 목록 ({players.length}/100)
+                  👥 참가자 목록 ({playerList.length}/100)
                 </h3>
                 <div className="flex gap-2 text-xs font-bold">
                   <span className="text-green-400">생존 {alivePlayers.length}</span>
@@ -1086,9 +1088,9 @@ export default function AdminPage() {
 
               <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-1">
                 <AnimatePresence>
-                  {players.map((player) => (
+                  {playerList.map((player) => (
                     <motion.div
-                      key={player.id}
+                      key={player?.id}
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
@@ -1121,7 +1123,7 @@ export default function AdminPage() {
                     </motion.div>
                   ))}
                 </AnimatePresence>
-                {players.length === 0 && (
+                {playerList.length === 0 && (
                   <p className="text-center text-gray-500 text-xs py-8">아직 참가자가 없습니다.</p>
                 )}
               </div>

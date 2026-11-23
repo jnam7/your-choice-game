@@ -954,6 +954,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     syncWithServer: (serverData: Partial<GameState>) => {
+      // players 안전 정규화 (null, undefined, 객체 방어)
+      if (serverData.players !== undefined) {
+        if (!Array.isArray(serverData.players)) {
+          serverData.players = serverData.players && typeof serverData.players === 'object'
+            ? (Object.values(serverData.players).filter(Boolean) as Player[])
+            : []
+        } else {
+          serverData.players = (serverData.players.filter(Boolean) as Player[])
+        }
+      }
       // 대기실 복귀/초기화 시 이전 게임 잔여 데이터(투표, 결과 등) 안전 정리
       if (serverData.phase === 'lobby' && (serverData.roundNumber === 0 || !serverData.roundNumber)) {
         serverData.votes = serverData.votes || {}

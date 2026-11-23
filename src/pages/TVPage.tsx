@@ -8,6 +8,7 @@ import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useFirebaseSync } from '../hooks/useFirebaseSync'
 import { rtdb, RTDB_PATHS } from '../firebase'
+import type { Player } from '../types/game'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -172,6 +173,7 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
 // ===== 1. TV 로비 (QR & 접속자 카운트) =====
 function TVLobby() {
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const serverHostUrl = useGameStore((s) => s.serverHostUrl)
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
   const qrMode = useGameStore((s) => s.qrMode)
@@ -188,10 +190,10 @@ function TVLobby() {
       playersRef,
       (snapshot) => {
         const val = snapshot.val()
-        if (val) {
-          const list: any[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
-          useGameStore.getState().syncWithServer({ players: list })
-        }
+        const list: Player[] = Array.isArray(val)
+          ? val.filter(Boolean)
+          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
+        useGameStore.getState().syncWithServer({ players: list })
       },
       (err) => {
         console.error('❌ [TVLobby] Firebase players onValue error:', err)
@@ -438,32 +440,42 @@ function TVLobby() {
       >
         <div className="flex items-baseline justify-center gap-2">
           <span className="font-display text-7xl md:text-9xl text-gold text-shadow-glow font-bold">
-            {players.length}
+            {playerList.length}
           </span>
           <span className="text-gray-400 text-2xl md:text-3xl font-display">/ 100명</span>
         </div>
-        <p className="text-gold-light/80 text-lg md:text-xl font-medium mt-1">현재 접속 대기 중</p>
+        <p className="text-gold-light/80 text-lg md:text-xl font-medium mt-1">
+          {playerList.length > 0 ? '현재 접속 대기 중' : '참가자를 기다리는 중입니다...'}
+        </p>
       </motion.div>
 
       {/* 참가자 닉네임 롤링 티커 */}
-      {players.length > 0 && (
+      {playerList.length > 0 ? (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8 }}
           className="mt-6 flex flex-wrap gap-2.5 justify-center max-w-4xl px-4"
         >
-          {players.slice(-25).map((p, i) => (
+          {playerList.slice(-25).map((p, i) => (
             <motion.span
-              key={p.id}
+              key={p?.id || i}
               initial={{ opacity: 0, scale: 0 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.03 * i }}
               className="px-3.5 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-full text-gold text-sm font-bold shadow"
             >
-              👤 {p.nickname}
+              👤 {p?.nickname || '참가자'}
             </motion.span>
           ))}
+        </motion.div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 0.7 }}
+          className="mt-6 text-gray-400 text-sm font-medium"
+        >
+          화면의 QR 코드를 스캔하여 가장 먼저 대기실에 입장해보세요!
         </motion.div>
       )}
     </div>
@@ -580,13 +592,14 @@ function TVVoting() {
   const currentQuestion = useGameStore((s) => s.currentQuestion)
   const votes = useGameStore((s) => s.votes)
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const endVoting = useGameStore((s) => s.endVoting)
   const roundNumber = useGameStore((s) => s.roundNumber)
   const isFinals = useGameStore((s) => s.isFinals)
   const timeLimit = useGameStore((s) => s.timeLimit)
   const votingDeadline = useGameStore((s) => s.votingDeadline)
   const ruleMode = useGameStore((s) => s.ruleMode)
-  const alivePlayers = players.filter((p) => p.status === 'alive')
+  const alivePlayers = playerList.filter((p) => p && p.status === 'alive')
   const voteCount = Object.keys(votes).length
 
   const [timeLeft, setTimeLeft] = useState(timeLimit || 15)
@@ -766,6 +779,7 @@ function TVRevealing() {
 function TVResult() {
   const currentResult = useGameStore((s) => s.currentResult)
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const roundNumber = useGameStore((s) => s.roundNumber)
   const [showBars, setShowBars] = useState(false)
   const [showEliminated, setShowEliminated] = useState(false)
@@ -792,12 +806,12 @@ function TVResult() {
   const pctA = totalVoters > 0 ? Math.round((currentResult.votesA / totalVoters) * 100) : 0
   const pctB = totalVoters > 0 ? Math.round((currentResult.votesB / totalVoters) * 100) : 0
 
-  const eliminatedPlayers = currentResult?.eliminated
-    ? players.filter((p) => currentResult.eliminated.includes(p.id))
+  const eliminatedPlayers = currentResult?.eliminated && Array.isArray(currentResult.eliminated)
+    ? playerList.filter((p) => p && currentResult.eliminated.includes(p.id))
     : []
-  const alivePlayers = currentResult?.survivors
-    ? players.filter((p) => currentResult.survivors.includes(p.id))
-    : players.filter((p) => p.status === 'alive')
+  const alivePlayers = currentResult?.survivors && Array.isArray(currentResult.survivors)
+    ? playerList.filter((p) => p && currentResult.survivors.includes(p.id))
+    : playerList.filter((p) => p && p.status === 'alive')
 
   return (
     <div className="min-h-screen flex flex-col justify-between relative pb-10">
@@ -926,13 +940,13 @@ function TVResult() {
                 <div className="flex flex-wrap gap-2 justify-center max-h-32 overflow-y-auto px-4 py-2 bg-navy-dark/60 rounded-xl border border-red-500/20">
                   {eliminatedPlayers.map((p, i) => (
                     <motion.span
-                      key={p.id}
+                      key={p?.id || i}
                       initial={{ scale: 1.3, opacity: 0 }}
                       animate={{ scale: 1, opacity: 0.6 }}
                       transition={{ delay: i * 0.05 }}
                       className="px-3 py-1 bg-red-950/40 border border-red-800/40 rounded-full text-red-300 text-xs line-through font-medium"
                     >
-                      💀 {p.nickname}
+                      💀 {p?.nickname || '탈락자'}
                     </motion.span>
                   ))}
                 </div>
@@ -959,7 +973,8 @@ function TVResult() {
 // ===== 6. TV 게임 오버 및 최종 우승 연출 (GAMEOVER) =====
 function TVGameOver() {
   const players = useGameStore((s) => s.players)
-  const winners = players.filter((p) => p.status === 'alive')
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
+  const winners = playerList.filter((p) => p && p.status === 'alive')
 
   // 우승 축하 팡파르 효과음
   useEffect(() => {

@@ -46,20 +46,11 @@ export function useFirebaseSync() {
         })
       },
       onPlayers: (playersList: Player[]) => {
-        if (!Array.isArray(playersList) || playersList.length === 0) return
-        const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-        const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
-
-        let finalList = playersList
-        if (mySavedId && mySavedNick && !playersList.some((p) => p.id === mySavedId)) {
-          finalList = [
-            ...playersList,
-            { id: mySavedId, nickname: mySavedNick, status: 'alive', joinedAt: Date.now() },
-          ]
-        }
-
+        const list: Player[] = Array.isArray(playersList)
+          ? playersList.filter(Boolean)
+          : (playersList && typeof playersList === 'object' ? (Object.values(playersList).filter(Boolean) as Player[]) : [])
         syncWithServer({
-          players: finalList,
+          players: list,
         })
       },
       onVotes: (votesMap: Record<string, 'A' | 'B'>) => {
@@ -84,24 +75,14 @@ export function useFirebaseSync() {
         calculatedTimeLeft = remainingSec
       }
 
-      const incomingPlayers: Player[] = Array.isArray(serverState.players) ? serverState.players : []
-      const cur = useGameStore.getState().players
-
-      let resolvedPlayers: Player[] = []
-      if (incomingPlayers.length > 0) {
-        resolvedPlayers = incomingPlayers
-      } else {
-        resolvedPlayers = cur
-      }
+      const incomingPlayers: Player[] = Array.isArray(serverState.players)
+        ? serverState.players.filter(Boolean)
+        : (serverState.players && typeof serverState.players === 'object'
+          ? (Object.values(serverState.players).filter(Boolean) as Player[])
+          : (serverState.players === null ? [] : useGameStore.getState().players))
 
       const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
       const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
-      if (mySavedId && mySavedNick && !resolvedPlayers.some((p) => p.id === mySavedId)) {
-        resolvedPlayers = [
-          ...resolvedPlayers,
-          { id: mySavedId, nickname: mySavedNick, status: 'alive', joinedAt: Date.now() },
-        ]
-      }
 
       // 게임 진행 중(question 또는 voting)에만 튕김 방지용 자동 재등록 허용
       const isGamePlaying = serverState.phase === 'question' || serverState.phase === 'voting'
@@ -132,7 +113,7 @@ export function useFirebaseSync() {
         timeLimit: serverState.timeLimit || 15,
         votingDeadline: serverState.votingDeadline,
         timeLeft: calculatedTimeLeft,
-        players: resolvedPlayers,
+        players: incomingPlayers,
         votes: serverState.votes || {},
       })
     }

@@ -102,6 +102,7 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
   const [nickname, setNickname] = useState('')
   const [error, setError] = useState('')
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -134,11 +135,6 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         localStorage.setItem('lasttwo_player_nickname', trimmed)
       }
 
-      // 1-1. 스토어 상태에 플레이어 즉시 반영 (참가자 수 즉각 렌더링 및 0명 방지)
-      const curPlayers = useGameStore.getState().players
-      if (!curPlayers.some((p) => p.id === localId)) {
-        useGameStore.getState().syncWithServer({ players: [...curPlayers, newPlayer] })
-      }
       useGameStore.getState().setCurrentPlayer(localId)
 
       // 2. [비동기 멈춤 100% 방지] 클릭 즉시 onJoin 호출하여 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
@@ -234,8 +230,8 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
           </motion.button>
         </div>
 
-        <p className="text-center text-gray-500 text-sm mt-4">
-          현재 {players.length}명 참가 중
+        <p className="text-center text-gray-400 text-sm mt-4 font-medium">
+          현재 {playerList.length}명 참여 중
         </p>
       </motion.form>
     </div>
@@ -256,19 +252,15 @@ function WaitingRoom({
   useFirebaseSync()
 
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
   const phase = useGameStore((s) => s.phase)
   const changeNickname = useGameStore((s) => s.changeNickname)
 
-  const currentPlayer = players.find((p) => p.id === currentPlayerId) || player
+  const currentPlayer = playerList.find((p) => p.id === currentPlayerId) || player
   const [isEditing, setIsEditing] = useState(false)
   const [editInput, setEditInput] = useState(currentPlayer?.nickname || '')
   const [editError, setEditError] = useState('')
-
-  // 실시간 참가자 수 계산: Firebase 및 서버 players 실시간 반영 + 본인 누락 방지
-  const effectiveMyId = currentPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
-  const hasMe = effectiveMyId ? players.some((p) => p.id === effectiveMyId) : false
-  const activeCount = players.length > 0 ? (hasMe ? players.length : players.length + 1) : 1
 
   // 대기실 체류 중 서버에 지속적 하트비트 등록 (관리자/TV에 접속 카운트 100% 누락 방지)
   useEffect(() => {
@@ -421,7 +413,7 @@ function WaitingRoom({
 
         <div className="bg-navy-dark rounded-xl p-4 mb-4">
           <p className="text-gold text-sm mb-1">현재 접속 참가자</p>
-          <p className="font-display text-4xl text-white">{activeCount}명</p>
+          <p className="font-display text-4xl text-white">{playerList.length}명</p>
         </div>
 
         <motion.div
@@ -1134,16 +1126,10 @@ export default function PlayerPage() {
       playersRef,
       (snapshot) => {
         const val = snapshot.val()
-        if (val) {
-          const list: Player[] = Array.isArray(val) ? val.filter(Boolean) : Object.values(val)
-          const myId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-          const myNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
-          let merged = list
-          if (myId && myNick && !list.some((p) => p.id === myId)) {
-            merged = [...list, { id: myId, nickname: myNick, status: 'alive', joinedAt: Date.now() }]
-          }
-          useGameStore.getState().syncWithServer({ players: merged })
-        }
+        const list: Player[] = Array.isArray(val)
+          ? val.filter(Boolean)
+          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
+        useGameStore.getState().syncWithServer({ players: list })
       },
       (err) => {
         console.error('❌ [PlayerPage] Firebase players onValue error:', err)
