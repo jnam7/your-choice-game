@@ -595,6 +595,18 @@ export function syncPlugin(): Plugin {
           ioInstance?.emit('server:tunnel_updated', newUrl.trim())
         }
       })
+
+      socket.on('admin:change_qr_mode', (data, callback) => {
+        try {
+          const mode = data?.mode === 'EXTERNAL' || data?.mode === 'tunnel' ? 'tunnel' : 'wifi'
+          gameState.qrMode = mode
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode })
+          ioInstance?.emit('game:qr_mode_changed', { mode })
+          if (callback) callback({ success: true, mode })
+        } catch (err) {
+          if (callback) callback({ success: false, mode: 'wifi' })
+        }
+      })
     })
   }
 

@@ -196,16 +196,24 @@ function TVLobby() {
       }
     }
 
+    const handleQrModeChanged = (data: any) => {
+      if (data?.mode) {
+        setQrMode(data.mode === 'EXTERNAL' || data.mode === 'tunnel' ? 'tunnel' : 'wifi')
+      }
+    }
+
     socket.on('game:player_joined', handlePlayersUpdate)
     socket.on('player:joined', handlePlayersUpdate)
     socket.on('players:update', handlePlayersUpdate)
+    socket.on('game:qr_mode_changed', handleQrModeChanged)
 
     return () => {
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
+      socket.off('game:qr_mode_changed', handleQrModeChanged)
     }
-  }, [])
+  }, [setQrMode])
 
   const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
@@ -259,6 +267,14 @@ function TVLobby() {
     }
   }, [])
 
+  // 활성 탭: 'wifi' 또는 'tunnel' (관리자 화면과 양방향 실시간 동기화)
+  const activeTab: 'wifi' | 'tunnel' = qrMode === 'tunnel' ? 'tunnel' : 'wifi'
+
+  const handleSelectTab = (tab: 'wifi' | 'tunnel') => {
+    setQrMode(tab)
+    socket.emit('admin:change_qr_mode', { mode: tab === 'tunnel' ? 'EXTERNAL' : 'WIFI' })
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 md:p-8 relative">
       <div className="particles-bg" />
@@ -277,91 +293,119 @@ function TVLobby() {
           YOUR CHOICE - THE LAST TWO
         </p>
         <p className="text-gray-300 text-sm md:text-base mt-2 font-medium">
-          스마트폰 카메라로 본인의 네트워크(Wi-Fi 또는 LTE)에 맞는 QR 코드를 스캔하세요!
+          스마트폰 카메라로 화면의 QR 코드를 스캔하여 게임에 참가하세요!
         </p>
       </motion.div>
 
-      {/* 2개의 완전히 분리된 QR 코드 카드 (좌: 사내 Wi-Fi / 우: LTE/5G 어디서나) */}
+      {/* 접속 방식 선택 탭 버튼 (오직 1개의 QR만 중앙에 표시) */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3, duration: 0.8 }}
-        className="flex flex-col lg:flex-row items-stretch justify-center gap-6 md:gap-10 max-w-5xl w-full"
+        transition={{ delay: 0.2 }}
+        className="mb-6 flex items-center justify-center gap-3 p-1.5 bg-navy-dark/90 border border-gold/30 rounded-2xl shadow-xl backdrop-blur max-w-lg w-full"
       >
-        {/* [QR 1]: 📶 사내 Wi-Fi 접속 전용 QR */}
-        <div className="glass-card flex-1 p-6 md:p-7 border-2 border-emerald-500/40 shadow-2xl flex flex-col items-center justify-between text-center relative overflow-hidden group">
-          <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-emerald-500 to-teal-400" />
+        <button
+          onClick={() => handleSelectTab('wifi')}
+          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${
+            activeTab === 'wifi'
+              ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 text-white shadow-lg shadow-emerald-500/30 scale-102 font-extrabold'
+              : 'text-gray-300 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <span>📶 같은 Wi-Fi 접속</span>
+        </button>
 
-          <div className="mb-4">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-xs md:text-sm font-bold shadow-inner">
-              <span className="text-base">📶</span>
-              <span>사내 / 행사장 Wi-Fi 접속 QR</span>
-            </div>
-            <p className="text-gray-300 text-xs mt-2 font-medium">
-              같은 Wi-Fi에 연결된 스마트폰 <span className="text-emerald-400 font-bold">(초고속 권장)</span>
-            </p>
-          </div>
+        <button
+          onClick={() => handleSelectTab('tunnel')}
+          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${
+            activeTab === 'tunnel'
+              ? 'bg-gradient-to-r from-gold-dark via-gold to-gold-light text-navy-dark shadow-lg shadow-gold/30 scale-102 font-extrabold'
+              : 'text-gray-300 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <span>🌍 어디서나(LTE/5G)</span>
+          {publicLteUrl ? (
+            <span className="flex h-2.5 w-2.5 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
+          ) : (
+            <span className="text-[11px] text-yellow-300 font-normal bg-yellow-900/60 px-2 py-0.5 rounded-full border border-yellow-500/40">
+              대기중
+            </span>
+          )}
+        </button>
+      </motion.div>
 
-          <div className="bg-white p-4 rounded-2xl shadow-xl transition-transform duration-300 group-hover:scale-102">
+      {/* 화면 중앙 단 1개의 대형 QR 코드 카드 */}
+      <motion.div
+        key={activeTab}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.25 }}
+        className={`glass-card p-6 md:p-8 border-2 shadow-2xl flex flex-col items-center max-w-md w-full ${
+          activeTab === 'wifi' ? 'border-emerald-500/40' : 'border-gold/40'
+        }`}
+      >
+        {/* 상단 접속 모드 안내 배지 */}
+        <div className="mb-4 px-4 py-1.5 rounded-full bg-navy-dark border text-xs md:text-sm font-bold flex items-center gap-2 shadow-inner">
+          {activeTab === 'wifi' ? (
+            <>
+              <span className="text-emerald-400">📶 사내 Wi-Fi 연결</span>
+              <span className="text-gray-400 font-normal hidden sm:inline">| 같은 공유기 연결 필요 (초고속 권장)</span>
+            </>
+          ) : publicLteUrl ? (
+            <>
+              <span className="text-gold">🌍 LTE / 5G 외부 접속</span>
+              <span className="text-gray-400 font-normal hidden sm:inline">| 모바일 데이터로 어디서나 스캔 가능</span>
+            </>
+          ) : (
+            <>
+              <span className="text-yellow-400 animate-pulse">⚠️ 외부 터널 연결 대기 중</span>
+              <span className="text-gray-400 font-normal hidden sm:inline">| Wi-Fi 탭 이용 권장</span>
+            </>
+          )}
+        </div>
+
+        {/* QR 코드 본체 (260px 대형 1개) */}
+        {activeTab === 'wifi' ? (
+          <div className="bg-white p-5 rounded-3xl shadow-2xl">
             <QRCodeSVG
               value={wifiUrl}
-              size={210}
+              size={260}
               bgColor="#ffffff"
               fgColor="#0B1426"
               level="H"
             />
           </div>
-
-          <div className="mt-4 w-full">
-            <p className="text-gray-400 text-[11px] mb-1 font-mono">스캔 또는 브라우저 주소 직접 입력</p>
-            <div className="px-3 py-1.5 bg-navy-dark/95 rounded-xl border border-emerald-500/30 font-mono text-xs md:text-sm text-emerald-300 font-bold break-all select-all shadow-inner tracking-wide">
-              {wifiUrl}
-            </div>
+        ) : publicLteUrl ? (
+          <div className="bg-white p-5 rounded-3xl shadow-2xl">
+            <QRCodeSVG
+              value={publicLteUrl}
+              size={260}
+              bgColor="#ffffff"
+              fgColor="#0B1426"
+              level="H"
+            />
           </div>
-        </div>
-
-        {/* [QR 2]: 🌍 어디서나 (LTE / 5G) 외부 접속 전용 QR */}
-        <div className="glass-card flex-1 p-6 md:p-7 border-2 border-gold/40 shadow-2xl flex flex-col items-center justify-between text-center relative overflow-hidden group">
-          <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-gold via-yellow-400 to-amber-500" />
-
-          <div className="mb-4">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-yellow-950/80 border border-gold/50 text-gold text-xs md:text-sm font-bold shadow-inner">
-              <span className="text-base">🌍</span>
-              <span>어디서나 (LTE / 5G) 접속 QR</span>
-            </div>
-            <p className="text-gray-300 text-xs mt-2 font-medium">
-              와이파이 없이 모바일 데이터로 접속하는 스마트폰
+        ) : (
+          <div className="bg-navy-dark/95 border border-gold/30 p-6 rounded-3xl shadow-2xl w-[260px] h-[260px] flex flex-col items-center justify-center text-center">
+            <span className="text-4xl mb-3 animate-spin">🔄</span>
+            <p className="text-gold font-bold text-sm mb-1.5">외부 공인 주소 연결 중</p>
+            <p className="text-gray-300 text-xs leading-relaxed mb-3">
+              같은 공간에 계신 분들은 상단의 <span className="text-emerald-400 font-bold">[📶 같은 Wi-Fi 접속]</span> 탭을 클릭하여 즉시 접속하세요.
+            </p>
+            <p className="text-[10px] text-gray-500 font-mono">
+              (서버 node server.mjs 실행 시 자동 발급)
             </p>
           </div>
+        )}
 
-          {publicLteUrl ? (
-            <div className="bg-white p-4 rounded-2xl shadow-xl transition-transform duration-300 group-hover:scale-102">
-              <QRCodeSVG
-                value={publicLteUrl}
-                size={210}
-                bgColor="#ffffff"
-                fgColor="#0B1426"
-                level="H"
-              />
-            </div>
-          ) : (
-            <div className="bg-navy-dark/95 border border-gold/30 p-5 rounded-2xl shadow-2xl w-[210px] h-[210px] flex flex-col items-center justify-center text-center">
-              <span className="text-3xl mb-2 animate-spin">🔄</span>
-              <p className="text-gold font-bold text-xs mb-1">외부 공인 주소 연결 중</p>
-              <p className="text-gray-300 text-[11px] leading-relaxed mb-2">
-                같은 공간에 계신 분은 왼쪽의 <span className="text-emerald-400 font-bold">[사내 Wi-Fi QR]</span>로 즉시 접속하세요!
-              </p>
-              <p className="text-[10px] text-gray-500 font-mono">(node server.mjs 실행 시 자동 발급)</p>
-            </div>
-          )}
-
-          <div className="mt-4 w-full">
-            <p className="text-gray-400 text-[11px] mb-1 font-mono">
-              {publicLteUrl ? '스캔 또는 외부 주소 직접 입력' : '외부 접속 주소 발급 대기 중'}
-            </p>
-            <div className="px-3 py-1.5 bg-navy-dark/95 rounded-xl border border-gold/30 font-mono text-xs md:text-sm text-gold font-bold break-all select-all shadow-inner tracking-wide">
-              {publicLteUrl || '터널 연결 대기 중...'}
-            </div>
+        {/* 하단 접속 안내 및 주소 텍스트 */}
+        <div className="mt-5 text-center w-full">
+          <p className="text-gray-300 text-xs mb-1.5 font-medium">카메라 스캔 또는 모바일 브라우저 주소창 직접 입력</p>
+          <div className="px-4 py-2 bg-navy-dark/95 rounded-xl border border-gold/30 font-mono text-sm md:text-base text-gold font-bold break-all select-all shadow-inner tracking-wide">
+            {activeTab === 'wifi' ? wifiUrl : (publicLteUrl || '외부 접속 주소 발급 대기 중...')}
           </div>
         </div>
       </motion.div>

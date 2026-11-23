@@ -195,9 +195,17 @@ export default function AdminPage() {
       }
     }
 
+    const handleQrModeChanged = (data: any) => {
+      if (data?.mode) {
+        setAdminQrTab(data.mode === 'EXTERNAL' || data.mode === 'tunnel' ? 'lte' : 'wifi')
+      }
+    }
+
     socket.on('server:tunnel_updated', handleTunnelUpdated)
+    socket.on('game:qr_mode_changed', handleQrModeChanged)
     return () => {
       socket.off('server:tunnel_updated', handleTunnelUpdated)
+      socket.off('game:qr_mode_changed', handleQrModeChanged)
     }
   }, [setServerHostUrl])
 
@@ -903,7 +911,11 @@ export default function AdminPage() {
               <div className="flex gap-2 mb-3.5">
                 <button
                   type="button"
-                  onClick={() => setAdminQrTab('wifi')}
+                  onClick={() => {
+                    setAdminQrTab('wifi')
+                    setQrMode('wifi')
+                    socket.emit('admin:change_qr_mode', { mode: 'WIFI' })
+                  }}
                   className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
                     adminQrTab === 'wifi'
                       ? 'bg-emerald-500 text-navy-dark border-emerald-400 shadow-lg shadow-emerald-500/30'
@@ -915,7 +927,11 @@ export default function AdminPage() {
 
                 <button
                   type="button"
-                  onClick={() => setAdminQrTab('lte')}
+                  onClick={() => {
+                    setAdminQrTab('lte')
+                    setQrMode('tunnel')
+                    socket.emit('admin:change_qr_mode', { mode: 'EXTERNAL' })
+                  }}
                   className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
                     adminQrTab === 'lte'
                       ? 'bg-gold text-navy-dark border-gold shadow-lg shadow-gold/30'

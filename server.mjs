@@ -544,6 +544,20 @@ io.on('connection', (socket) => {
       console.error('[admin:update_server_url Error]', e)
     }
   })
+
+  // 관리자 대기실 QR 모드 변경 요청 (admin:change_qr_mode)
+  socket.on('admin:change_qr_mode', (data, callback) => {
+    try {
+      const mode = data?.mode === 'EXTERNAL' || data?.mode === 'tunnel' ? 'tunnel' : 'wifi'
+      gameState.qrMode = mode
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode })
+      io.emit('game:qr_mode_changed', { mode })
+      if (callback) callback({ success: true, mode })
+    } catch (err) {
+      if (callback) callback({ success: false, mode: 'wifi' })
+    }
+  })
 })
 
 // 4. 로컬 IP 자동 감지 유틸리티
