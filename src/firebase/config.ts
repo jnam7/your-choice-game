@@ -4,21 +4,20 @@ import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions'
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'demo-project.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'demo-project',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'demo-project.appspot.com',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyA_the_last_two_game_key',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'the-last-two-game.firebaseapp.com',
+  databaseURL:
+    import.meta.env.VITE_FIREBASE_DATABASE_URL ||
+    'https://the-last-two-game-default-rtdb.firebaseio.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'the-last-two-game',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'the-last-two-game.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789',
   appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:123456789:web:demo',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-DEMO123456',
 }
 
 export const isFirebaseConfigured = () => {
-  return (
-    Boolean(import.meta.env.VITE_FIREBASE_API_KEY) &&
-    import.meta.env.VITE_FIREBASE_API_KEY !== 'your_api_key_here' &&
-    import.meta.env.VITE_FIREBASE_API_KEY !== 'demo-api-key'
-  )
+  return true
 }
 
 export const isEmulatorEnabled = () => {

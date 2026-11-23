@@ -14,6 +14,7 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'the-last-two-game.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789',
   appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:123456789:web:demo',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-DEMO123456',
 }
 
 export const isFirebaseConfigured = () => {
