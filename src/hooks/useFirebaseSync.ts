@@ -84,10 +84,10 @@ export function useFirebaseSync() {
       const isConsole = typeof window !== 'undefined' && (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv'))
 
       let resolvedPlayers: Player[] = []
-      if (isConsole) {
+      if (isConsole || serverState.phase === 'lobby') {
         resolvedPlayers = incomingPlayers
       } else {
-        // 스마트폰 참가자 화면: 서버 목록을 우선하되, 로컬에서 등록한 본인 정보 누락 시 안전 보존 및 자동 재등록
+        // 스마트폰 참가자 화면: 서버 목록을 우선하되, 로컬에서 등록한 본인 정보 누락 시 안전 보존
         const map = new Map<string, Player>()
         for (const p of incomingPlayers) map.set(p.id, p)
         for (const p of cur) {
@@ -95,9 +95,11 @@ export function useFirebaseSync() {
         }
         resolvedPlayers = Array.from(map.values())
 
+        // 게임 진행 중(question 또는 voting)에만 튕김 방지용 자동 재등록 허용
+        const isGamePlaying = serverState.phase === 'question' || serverState.phase === 'voting'
         const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
         const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
-        if (mySavedId && mySavedNick) {
+        if (isGamePlaying && mySavedId && mySavedNick) {
           const inServer = incomingPlayers.some((p) => p.id === mySavedId || p.nickname === mySavedNick)
           if (!inServer) {
             socket.emit('player:join', { id: mySavedId, nickname: mySavedNick })

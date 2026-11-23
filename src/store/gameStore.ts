@@ -49,6 +49,11 @@ function loadPersistedState(): Partial<GameState> {
       if (parsed.phase === 'lobby' || !parsed.phase) {
         parsed.votes = {}
         parsed.currentResult = null
+        parsed.currentPlayerId = null
+        try {
+          localStorage.removeItem('lasttwo_player_id')
+          localStorage.removeItem('lasttwo_player_nickname')
+        } catch {}
       }
       return parsed
     }
@@ -108,11 +113,11 @@ const initialState: GameState = {
       ? persisted.questionsList
       : defaultQuestions,
   chatMessages: persisted.chatMessages && persisted.chatMessages.length > 0 ? persisted.chatMessages : defaultInitialState.chatMessages,
-  // 브라우저 탭 세션 아이디 복구
+  // 브라우저 탭 세션 아이디 복구 (대기실/로비일 때는 이전 세션 복원하지 않음)
   currentPlayerId:
-    (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null) ||
-    persisted.currentPlayerId ||
-    null,
+    (persisted.phase === 'question' || persisted.phase === 'voting')
+      ? ((typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null) || persisted.currentPlayerId || null)
+      : null,
 }
 
 let chatChannel: BroadcastChannel | null = null

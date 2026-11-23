@@ -98,9 +98,7 @@ function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 
 // ===== 닉네임 입력 폼 =====
 function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
-  const [nickname, setNickname] = useState(() => {
-    return typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') || '' : ''
-  })
+  const [nickname, setNickname] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const { addPlayer, players } = useGameStore()
@@ -121,9 +119,7 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
 
     try {
       setIsSubmitting(true)
-      const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-      const existing = players.find((p) => p.nickname === trimmed)
-      const localId = existing ? existing.id : (savedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)))
+      const localId = 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)
 
       // 1. 로컬 스토리지에 즉시 저장
       if (typeof window !== 'undefined') {
@@ -1094,8 +1090,10 @@ function clearLocalPlayerSession() {
   try {
     localStorage.removeItem('lasttwo_player_id')
     localStorage.removeItem('lasttwo_player_nickname')
+    localStorage.removeItem('your_choice_game_state')
     sessionStorage.removeItem('lasttwo_player_id')
     sessionStorage.removeItem('lasttwo_player_nickname')
+    sessionStorage.clear()
   } catch (e) {}
 }
 
@@ -1112,35 +1110,55 @@ export default function PlayerPage() {
   const removePlayer = useGameStore((s) => s.removePlayer)
   const players = useGameStore((s) => s.players)
 
+  // 게임 진행 중(문제 풀이/투표) 단계 여부: 오직 이 단계에서만 예외적으로 튕김 방지용 복원 허용
+  const isPlayPhase = phase === 'question' || phase === 'voting'
+
   const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
   const savedNickname = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
   // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
-  // 대기실(phase === 'lobby')인 경우, localStorage에 이전 데이터가 있더라도 최초 닉네임 입력 화면을 거치도록 하되,
-  // 게임이 이미 진행 중(phase !== 'lobby')인 경우 기존 참가자 정보를 자동 복원
+  // 대기실(lobby)이거나 게임 진행 중이 아닐 때는 무조건 false 및 로컬 세션 삭제!
+  // 오직 실제 문제 풀이/투표 진행 중(phase === 'question' || 'voting')일 때만 예외적으로 복원 허용
   const [hasConfirmedJoin, setHasConfirmedJoin] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
-    return Boolean(savedId && savedNickname && phase !== 'lobby')
+    if (!isPlayPhase) {
+      clearLocalPlayerSession()
+      return false
+    }
+    return Boolean(savedId && savedNickname)
   })
 
   const [myPlayer, setMyPlayer] = useState<Player | null>(() => {
     if (typeof window === 'undefined') return null
-    if (savedId && savedNickname && phase !== 'lobby') {
+    if (!isPlayPhase) return null
+    if (savedId && savedNickname) {
       return { id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() }
     }
     return null
   })
 
-  // phase가 lobby가 아닐 때 저장된 정보가 있다면 즉시 참가 확정 및 세션 복구
+  // 대기실(lobby) 상태 감지 시, 아직 참가 확정을 하지 않았다면 남아있는 로컬스토리지 강제 삭제
   useEffect(() => {
-    if (phase !== 'lobby' && savedId && savedNickname) {
+    if (phase === 'lobby') {
+      const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+      if (sId && !hasConfirmedJoin) {
+        clearLocalPlayerSession()
+        clearCurrentPlayer()
+        setMyPlayer(null)
+      }
+    }
+  }, [phase, hasConfirmedJoin, clearCurrentPlayer])
+
+  // 실제 문제 풀이/투표 중(isPlayPhase)일 때만 저장된 정보 복구
+  useEffect(() => {
+    if (isPlayPhase && savedId && savedNickname) {
       if (!hasConfirmedJoin) setHasConfirmedJoin(true)
       if (!myPlayer) {
         setMyPlayer({ id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() })
         setCurrentPlayer(savedId)
       }
     }
-  }, [phase, savedId, savedNickname, hasConfirmedJoin, myPlayer, setCurrentPlayer])
+  }, [isPlayPhase, savedId, savedNickname, hasConfirmedJoin, myPlayer, setCurrentPlayer])
 
   // 퇴장 처리 함수: 로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
   const handleExitGame = () => {
@@ -1193,10 +1211,10 @@ export default function PlayerPage() {
       return
     }
 
-    // 2. 게임 진행 중(phase !== 'lobby')인데 저장된 세션이 있는 경우:
+    // 2. 게임 진행 중(isPlayPhase)인데 저장된 세션이 있는 경우:
     // 서버 players 목록이 이미 로드되었고(players.length > 0), 서버 목록에 내 sId가 전혀 없다면?
     // -> 이전 게임의 유효하지 않은 세션이므로 파기하고 닉네임 입력 화면으로 초기화!
-    if (sId && players.length > 0) {
+    if (isPlayPhase && sId && players.length > 0) {
       const isValidPlayer = players.some((p) => p.id === sId)
       if (!isValidPlayer) {
         console.warn('⚠️ [Session Invalid] 현재 진행 중인 게임 세션에 없는 플레이어 ID입니다. 세션을 파기합니다:', sId)
@@ -1207,7 +1225,7 @@ export default function PlayerPage() {
         return
       }
     }
-  }, [phase, players, myPlayer, clearCurrentPlayer])
+  }, [phase, isPlayPhase, players, myPlayer, clearCurrentPlayer])
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
@@ -1229,8 +1247,8 @@ export default function PlayerPage() {
     const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
     const sNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
 
-    // 게임이 이미 진행 중(phase !== 'lobby')이고 저장된 세션이 있는 경우에만 백그라운드 재등록
-    if (sId && sNick && phase !== 'lobby') {
+    // 오직 실제 문제 풀이/투표 진행 중(isPlayPhase)일 때만 백그라운드 재등록
+    if (isPlayPhase && sId && sNick) {
       socket.emit('player:join', { id: sId, nickname: sNick }, (res: any) => {
         if (res?.success && res?.player) {
           setMyPlayer(res.player)
@@ -1262,14 +1280,14 @@ export default function PlayerPage() {
       socket.off('game:reset', handleGameReset)
       socket.off('game:player_kicked_all', handleGameReset)
     }
-  }, [setCurrentPlayer, clearCurrentPlayer, phase])
+  }, [setCurrentPlayer, clearCurrentPlayer, isPlayPhase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
-  const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId || savedId))
+  const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? savedId : null)))
   const currentPlayer: Player | null =
     foundInList ||
     myPlayer ||
-    (savedId && savedNickname && phase !== 'lobby'
+    (isPlayPhase && savedId && savedNickname
       ? {
           id: savedId,
           nickname: savedNickname,
@@ -1278,8 +1296,8 @@ export default function PlayerPage() {
         }
       : null)
 
-  // 대기실 단계이거나 아직 이번 접속에서 '참가하기'를 누르지 않은 경우 (단, 게임 진행 중이면 저장된 정보로 자동 진입)
-  if ((phase === 'lobby' && !hasConfirmedJoin) || !currentPlayer) {
+  // 대기실이거나 참가 확정을 하지 않았거나 플레이어 정보가 없으면 무조건 깨끗한 닉네임 입력 화면 강제!
+  if (!hasConfirmedJoin || !currentPlayer || (phase === 'lobby' && !hasConfirmedJoin)) {
     return (
       <NicknameForm
         onJoin={(p) => {
