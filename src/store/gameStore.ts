@@ -45,7 +45,12 @@ function loadPersistedState(): Partial<GameState> {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
-      return JSON.parse(saved)
+      const parsed = JSON.parse(saved)
+      if (parsed.phase === 'lobby' || !parsed.phase) {
+        parsed.votes = {}
+        parsed.currentResult = null
+      }
+      return parsed
     }
   } catch (e) {
     console.error('[loadPersistedState Error]', e)
@@ -859,8 +864,27 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     setCurrentPlayer: (id: string) => {
-      set({ currentPlayerId: id })
-      localStorage.setItem('lasttwo_player_id', id)
+      set({ currentPlayerId: id || null })
+      if (typeof window !== 'undefined') {
+        if (id) {
+          localStorage.setItem('lasttwo_player_id', id)
+        } else {
+          localStorage.removeItem('lasttwo_player_id')
+        }
+      }
+      persist()
+    },
+
+    clearCurrentPlayer: () => {
+      set({ currentPlayerId: null })
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('lasttwo_player_id')
+          localStorage.removeItem('lasttwo_player_nickname')
+          sessionStorage.removeItem('lasttwo_player_id')
+          sessionStorage.removeItem('lasttwo_player_nickname')
+        } catch (e) {}
+      }
       persist()
     },
 
@@ -929,6 +953,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     syncWithServer: (serverData: Partial<GameState>) => {
+      // 대기실 복귀/초기화 시 이전 게임 잔여 데이터(투표, 결과 등) 안전 정리
+      if (serverData.phase === 'lobby' && (serverData.roundNumber === 0 || !serverData.roundNumber)) {
+        serverData.votes = serverData.votes || {}
+        serverData.currentResult = null
+      }
       set((state) => ({
         ...state,
         ...serverData,

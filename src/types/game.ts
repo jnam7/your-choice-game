@@ -149,6 +149,7 @@ export interface GameActions {
   
   // 플레이어 세션
   setCurrentPlayer: (id: string) => void
+  clearCurrentPlayer: () => void
 
   // 결승 모드
   enterFinals: () => void

@@ -252,11 +252,11 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
 function WaitingRoom({
   player,
   onNicknameChange,
-  onRejoin,
+  onLeave,
 }: {
   player?: Player
   onNicknameChange?: (newNick: string) => void
-  onRejoin?: () => void
+  onLeave?: () => void
 }) {
   const players = useGameStore((s) => s.players)
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
@@ -378,15 +378,21 @@ function WaitingRoom({
                 ✏️ 수정
               </button>
             </div>
-            <div className="flex flex-col items-center gap-2 mb-6">
-              <p className="text-gray-400 text-sm">참가 완료!</p>
+
+            {/* 대기실 상태 및 퇴장/닉네임 변경 버튼 */}
+            <div className="flex flex-col items-center gap-3 my-5 w-full">
+              <div className="flex items-center justify-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <p className="text-emerald-400 text-sm font-bold">게임 대기실 입장 완료</p>
+              </div>
+
               <button
                 type="button"
-                onClick={onRejoin}
-                className="px-3.5 py-1.5 bg-navy-dark/90 hover:bg-gold/20 border border-gold/40 text-gold-light hover:text-gold text-xs rounded-xl font-bold transition-all inline-flex items-center gap-1.5 active:scale-95 shadow"
-                title="닉네임 변경 및 재입장 화면으로 돌아갑니다"
+                onClick={onLeave}
+                className="w-full py-2.5 px-4 bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 hover:border-red-500/80 text-red-300 hover:text-white text-xs md:text-sm rounded-xl font-bold transition-all flex items-center justify-center gap-2 active:scale-95 shadow"
+                title="퇴장하고 로컬 세션을 완전히 초기화한 후 닉네임 입력 화면으로 복귀합니다"
               >
-                <span>🔄 닉네임 변경 / 재입장</span>
+                <span>🚪 퇴장하기 / 닉네임 변경</span>
               </button>
             </div>
           </div>
@@ -1083,6 +1089,16 @@ function WinnerScreen() {
   )
 }
 
+function clearLocalPlayerSession() {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem('lasttwo_player_id')
+    localStorage.removeItem('lasttwo_player_nickname')
+    sessionStorage.removeItem('lasttwo_player_id')
+    sessionStorage.removeItem('lasttwo_player_nickname')
+  } catch (e) {}
+}
+
 // ===== 메인 직원 페이지 =====
 export default function PlayerPage() {
   // 실시간 웹소켓 및 Firebase 상태 동기화
@@ -1092,6 +1108,8 @@ export default function PlayerPage() {
   const phase = useGameStore((s) => s.phase)
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
   const setCurrentPlayer = useGameStore((s) => s.setCurrentPlayer)
+  const clearCurrentPlayer = useGameStore((s) => s.clearCurrentPlayer)
+  const removePlayer = useGameStore((s) => s.removePlayer)
   const players = useGameStore((s) => s.players)
 
   const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
@@ -1123,6 +1141,73 @@ export default function PlayerPage() {
       }
     }
   }, [phase, savedId, savedNickname, hasConfirmedJoin, myPlayer, setCurrentPlayer])
+
+  // 퇴장 처리 함수: 로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
+  const handleExitGame = () => {
+    const idToLeave = myPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+    if (idToLeave) {
+      socket.emit('player:leave', { id: idToLeave })
+      fetch('/api/game/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: idToLeave }),
+      }).catch(() => {})
+      fetch('/api/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: idToLeave }),
+      }).catch(() => {})
+      removePlayer(idToLeave)
+    }
+
+    clearLocalPlayerSession()
+    clearCurrentPlayer()
+    setMyPlayer(null)
+    setHasConfirmedJoin(false)
+  }
+
+  // 브라우저 닫기/퇴장 시 대기실 세션 정리
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (phase === 'lobby') {
+        const id = myPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+        if (id) {
+          const blob = new Blob([JSON.stringify({ id })], { type: 'application/json' })
+          navigator.sendBeacon('/api/game/leave', blob)
+        }
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [phase, myPlayer?.id])
+
+  // 게임 세션 유효성 검사 및 리셋 감지
+  useEffect(() => {
+    const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+
+    // 1. 대기실(lobby)인 경우: 이전 라운드 투표/탈락 잔여 데이터 리셋
+    if (phase === 'lobby') {
+      if (myPlayer && (myPlayer.status === 'eliminated' || myPlayer.eliminatedRound !== undefined)) {
+        setMyPlayer((prev) => (prev ? { ...prev, status: 'alive', eliminatedRound: undefined } : null))
+      }
+      return
+    }
+
+    // 2. 게임 진행 중(phase !== 'lobby')인데 저장된 세션이 있는 경우:
+    // 서버 players 목록이 이미 로드되었고(players.length > 0), 서버 목록에 내 sId가 전혀 없다면?
+    // -> 이전 게임의 유효하지 않은 세션이므로 파기하고 닉네임 입력 화면으로 초기화!
+    if (sId && players.length > 0) {
+      const isValidPlayer = players.some((p) => p.id === sId)
+      if (!isValidPlayer) {
+        console.warn('⚠️ [Session Invalid] 현재 진행 중인 게임 세션에 없는 플레이어 ID입니다. 세션을 파기합니다:', sId)
+        clearLocalPlayerSession()
+        clearCurrentPlayer()
+        setMyPlayer(null)
+        setHasConfirmedJoin(false)
+        return
+      }
+    }
+  }, [phase, players, myPlayer, clearCurrentPlayer])
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
@@ -1160,14 +1245,11 @@ export default function PlayerPage() {
     }
 
     const handleGameReset = () => {
-      // 참가자 완전 비우기 시에만 닉네임 입력 폼으로 초기화
+      // 참가자 완전 비우기 / 게임 초기화 시 로컬스토리지 완전 삭제 및 닉네임 입력 폼으로 초기화
+      clearLocalPlayerSession()
+      clearCurrentPlayer()
       setMyPlayer(null)
       setHasConfirmedJoin(false)
-      setCurrentPlayer('')
-      try {
-        localStorage.removeItem('lasttwo_player_id')
-        localStorage.removeItem('lasttwo_player_nickname')
-      } catch (e) {}
     }
 
     socket.on('game:set_reset', handleSetReset)
@@ -1180,14 +1262,14 @@ export default function PlayerPage() {
       socket.off('game:reset', handleGameReset)
       socket.off('game:player_kicked_all', handleGameReset)
     }
-  }, [setCurrentPlayer, phase])
+  }, [setCurrentPlayer, clearCurrentPlayer, phase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
   const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId || savedId))
   const currentPlayer: Player | null =
     foundInList ||
     myPlayer ||
-    (savedId && savedNickname
+    (savedId && savedNickname && phase !== 'lobby'
       ? {
           id: savedId,
           nickname: savedNickname,
@@ -1204,8 +1286,10 @@ export default function PlayerPage() {
           setMyPlayer(p)
           setCurrentPlayer(p.id)
           setHasConfirmedJoin(true)
-          localStorage.setItem('lasttwo_player_id', p.id)
-          localStorage.setItem('lasttwo_player_nickname', p.nickname)
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('lasttwo_player_id', p.id)
+            localStorage.setItem('lasttwo_player_nickname', p.nickname)
+          }
         }}
       />
     )
@@ -1263,9 +1347,7 @@ export default function PlayerPage() {
           onNicknameChange={(newNick) => {
             if (myPlayer) setMyPlayer({ ...myPlayer, nickname: newNick })
           }}
-          onRejoin={() => {
-            setHasConfirmedJoin(false)
-          }}
+          onLeave={handleExitGame}
         />
       )
     }

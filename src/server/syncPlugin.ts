@@ -234,6 +234,24 @@ export function syncPlugin(): Plugin {
       return
     }
 
+    // 3-1. 참가자 퇴장 (leave 및 game/leave)
+    if (req.method === 'POST' && (url === '/api/leave' || url === '/api/game/leave')) {
+      const body = await parseJsonBody(req)
+      const id = body?.id
+      if (id) {
+        gameState.players = gameState.players.filter((p) => p.id !== id)
+        if (gameState.votes && gameState.votes[id]) {
+          delete gameState.votes[id]
+        }
+        broadcastState()
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+        ioInstance?.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+        ioInstance?.emit('players:update', gameState.players)
+      }
+      sendJson(res, 200, { success: true })
+      return
+    }
+
     // 4. 투표 제출 (vote 및 game/vote)
     if (req.method === 'POST' && (url === '/api/vote' || url === '/api/game/vote')) {
       const body = await parseJsonBody(req)
@@ -416,6 +434,25 @@ export function syncPlugin(): Plugin {
         }
       })
 
+      socket.on('player:leave', (data, callback) => {
+        try {
+          const id = data?.id
+          if (id) {
+            gameState.players = gameState.players.filter((p) => p.id !== id)
+            if (gameState.votes && gameState.votes[id]) {
+              delete gameState.votes[id]
+            }
+            broadcastState()
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+            ioInstance?.emit('players:update', gameState.players)
+          }
+          if (callback) callback({ success: true })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
+      })
+
       socket.on('player:vote', (data, callback) => {
         try {
           const { playerId, choice } = data || {}
@@ -425,6 +462,25 @@ export function syncPlugin(): Plugin {
           }
           gameState.votes[playerId] = choice
           broadcastState()
+          if (callback) callback({ success: true })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
+      })
+
+      socket.on('player:leave', (data, callback) => {
+        try {
+          const id = data?.id
+          if (id) {
+            gameState.players = gameState.players.filter((p) => p.id !== id)
+            if (gameState.votes && gameState.votes[id]) {
+              delete gameState.votes[id]
+            }
+            broadcastState()
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+            ioInstance?.emit('players:update', gameState.players)
+          }
           if (callback) callback({ success: true })
         } catch (e: any) {
           if (callback) callback({ success: false, error: e.message })

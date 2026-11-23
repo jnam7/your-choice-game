@@ -216,6 +216,28 @@ io.on('connection', (socket) => {
     }
   })
 
+  // 참가자 퇴장 처리 (player:leave)
+  socket.on('player:leave', (data, callback) => {
+    try {
+      const id = data?.id
+      if (id) {
+        const found = gameState.players.find((p) => p.id === id)
+        gameState.players = gameState.players.filter((p) => p.id !== id)
+        if (gameState.votes && gameState.votes[id]) {
+          delete gameState.votes[id]
+        }
+        broadcastState()
+        io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+        io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+        io.emit('players:update', gameState.players)
+        console.log(`🚪 [PLAYER LEFT] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
+      }
+      if (callback) callback({ success: true })
+    } catch (e) {
+      if (callback) callback({ success: false, error: e.message })
+    }
+  })
+
   // 2. 참가자 투표 제출 (player:vote 및 3번 호환 player:submit_answer)
   const handleVote = (playerId, choice, callback) => {
     try {
@@ -710,6 +732,45 @@ app.post('/api/join', (req, res) => {
   }
 })
 
+app.post('/api/game/leave', (req, res) => {
+  try {
+    const { id } = req.body || {}
+    if (id) {
+      const found = gameState.players.find((p) => p.id === id)
+      gameState.players = gameState.players.filter((p) => p.id !== id)
+      if (gameState.votes && gameState.votes[id]) {
+        delete gameState.votes[id]
+      }
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+      io.emit('players:update', gameState.players)
+      console.log(`🚪 [HTTP LEAVE] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
+    }
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+app.post('/api/leave', (req, res) => {
+  try {
+    const { id } = req.body || {}
+    if (id) {
+      gameState.players = gameState.players.filter((p) => p.id !== id)
+      if (gameState.votes && gameState.votes[id]) {
+        delete gameState.votes[id]
+      }
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+      io.emit('players:update', gameState.players)
+    }
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 app.post('/api/game/vote', (req, res) => {
   try {
     const { playerId, choice } = req.body || {}
@@ -756,6 +817,45 @@ app.post('/api/game/join', (req, res) => {
     broadcastState()
     broadcastPlayerJoined(player)
     res.json({ success: true, player, players: gameState.players })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/leave', (req, res) => {
+  try {
+    const { id } = req.body || {}
+    if (id) {
+      const found = gameState.players.find((p) => p.id === id)
+      gameState.players = gameState.players.filter((p) => p.id !== id)
+      if (gameState.votes && gameState.votes[id]) {
+        delete gameState.votes[id]
+      }
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+      io.emit('players:update', gameState.players)
+      console.log(`🚪 [HTTP LEAVE] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
+    }
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+app.post('/api/leave', (req, res) => {
+  try {
+    const { id } = req.body || {}
+    if (id) {
+      gameState.players = gameState.players.filter((p) => p.id !== id)
+      if (gameState.votes && gameState.votes[id]) {
+        delete gameState.votes[id]
+      }
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
+      io.emit('players:update', gameState.players)
+    }
+    res.json({ success: true })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
