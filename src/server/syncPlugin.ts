@@ -1,6 +1,21 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
+import os from 'os'
+
+function getLocalNetworkIp() {
+  try {
+    const interfaces = os.networkInterfaces()
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.family === 'IPv4' && !net.internal) {
+          return net.address
+        }
+      }
+    }
+  } catch {}
+  return 'localhost'
+}
 
 interface Player {
   id: string
@@ -178,7 +193,10 @@ export function syncPlugin(): Plugin {
 
     // 2. 서버 정보 조회
     if (req.method === 'GET' && url === '/api/server-info') {
-      sendJson(res, 200, { publicUrl: gameState.serverHostUrl || '' })
+      sendJson(res, 200, {
+        localIp: getLocalNetworkIp(),
+        publicUrl: gameState.serverHostUrl || '',
+      })
       return
     }
 

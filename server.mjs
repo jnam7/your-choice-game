@@ -787,6 +787,8 @@ app.use((req, res, next) => {
 // 6. 로컬 터널 매니저 (serveo.net 기반 - 로컬 개발 전용)
 let reconnectDelay = 5000
 
+let tunnelAttempts = 0
+
 function connectTunnel(targetPort) {
   if (isProduction) return
   if (isReconnectingTunnel) return
@@ -799,23 +801,29 @@ function connectTunnel(targetPort) {
     sshProcess = null
   }
 
-  console.log('🔄 [로컬 터널 연결 및 복구 시도 중...]')
+  // 1차: localhost.run (LTE_5G_외부접속_터널실행.bat 호환), 2차: serveo.net 교차 시도
+  const useLocalhostRun = tunnelAttempts % 2 === 0
+  tunnelAttempts++
+
+  const hostTarget = useLocalhostRun ? 'nokey@localhost.run' : 'serveo.net'
+  console.log(`🔄 [로컬 터널 연결 시도 중...] (${hostTarget})`)
+
   try {
     const child = spawn('ssh', [
       '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=NUL',
       '-o', 'ServerAliveInterval=30',
       '-o', 'ServerAliveCountMax=120',
       '-o', 'TCPKeepAlive=yes',
       '-o', 'ExitOnForwardFailure=yes',
       '-R', `80:127.0.0.1:${targetPort}`,
-      'serveo.net',
+      hostTarget,
     ])
     sshProcess = child
 
     const handleOutput = (data) => {
       const text = data.toString()
-      const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.serveousercontent\.com/)
+      // serveo, localhost.run (.lhr.life), pinggy 등 모든 터널 도메인 정규식 매칭
+      const match = text.match(/https:\/\/[a-zA-Z0-9-.]+\.(serveo\.net|serveousercontent\.com|lhr\.life|pinggy\.link|loca\.lt|ngrok-free\.app|ngrok\.io)/i)
       if (match) {
         reconnectDelay = 5000
         const newUrl = match[0]
@@ -827,6 +835,7 @@ function connectTunnel(targetPort) {
           console.log(`=======================================================`)
           try {
             io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
+            io.emit('server:tunnel_updated', publicTunnelUrl)
           } catch {}
         }
       }

@@ -218,20 +218,28 @@ function TVLobby() {
     ? originUrl
     : (!isLocalhost
       ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
-      : `http://${localIp}:5000/`)
+      : `http://${localIp || '192.168.40.111'}:5000/`)
 
   // LTE / 5G 어디서나 접속 URL:
-  // 1. 배포된 실제 브라우저 도메인이면 originUrl
-  // 2. SSH/ngrok 터널 URL이 수신되었으면 tunnelUrl
-  // 3. 관리자가 설정한 serverHostUrl이 있으면 serverHostUrl
-  // 4. 그 외 기본값으로 originUrl을 사용하여 절대 "준비중"이나 빈 주소가 되지 않도록 처리
+  // 1. SSH 터널 URL이 수신되었으면 tunnelUrl
+  // 2. 이미 공인 배포 도메인이면 originUrl
+  // 3. 관리자가 설정한 외부 공인 도메인이면 serverHostUrl
+  // 사설 IP(192.168.*, localhost 등)는 LTE/5G 외부 주소로 절대 오인되지 않도록 차단
+  const isServerHostExternal = Boolean(
+    serverHostUrl &&
+    serverHostUrl.startsWith('http') &&
+    !serverHostUrl.includes('localhost') &&
+    !serverHostUrl.includes('127.0.0.1') &&
+    !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(serverHostUrl)
+  )
+
   const publicLteUrl = tunnelUrl
     ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
     : (isPublicDomain
       ? originUrl
-      : (serverHostUrl && serverHostUrl.startsWith('http')
+      : (isServerHostExternal
         ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
-        : originUrl))
+        : ''))
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -254,19 +262,14 @@ function TVLobby() {
     }
   }, [])
 
-  // 현재 모드 결정 (기본값: 배포 환경이면 tunnel, 로컬이면 저장된 모드 혹은 wifi)
-  const isTunnelMode = qrMode === 'tunnel' || (!qrMode && isPublicDomain) || (serverHostUrl && (serverHostUrl.includes('serveousercontent') || serverHostUrl.includes('lhr.life') || serverHostUrl.includes('ngrok') || serverHostUrl.includes('onrender.com')))
-  const effectiveMode: 'wifi' | 'tunnel' = qrMode ? qrMode : (isTunnelMode ? 'tunnel' : 'wifi')
+  // 현재 모드 결정 (기본값: Wi-Fi 모드, 터널 주소가 확실히 있으면 tunnel 가능)
+  const isTunnelAvailable = Boolean(publicLteUrl)
+  const effectiveMode: 'wifi' | 'tunnel' = qrMode === 'tunnel' ? 'tunnel' : (qrMode === 'wifi' ? 'wifi' : (isTunnelAvailable && isPublicDomain ? 'tunnel' : 'wifi'))
 
-  const activeJoinUrl = effectiveMode === 'tunnel' ? publicLteUrl : wifiUrl
+  const activeJoinUrl = effectiveMode === 'tunnel' ? (publicLteUrl || wifiUrl) : wifiUrl
 
   const handleSelectMode = (mode: 'wifi' | 'tunnel') => {
     setQrMode(mode)
-    if (mode === 'wifi') {
-      setServerHostUrl(wifiUrl)
-    } else {
-      setServerHostUrl(publicLteUrl)
-    }
   }
 
   return (
@@ -318,10 +321,16 @@ function TVLobby() {
           }`}
         >
           <span>🌍 어디서나(LTE/5G)</span>
-          <span className="flex h-2.5 w-2.5 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-          </span>
+          {isTunnelAvailable ? (
+            <span className="flex h-2.5 w-2.5 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
+          ) : (
+            <span className="text-[11px] text-yellow-300 font-normal bg-yellow-900/60 px-2 py-0.5 rounded-full border border-yellow-500/40">
+              대기중
+            </span>
+          )}
         </button>
       </motion.div>
 
@@ -339,30 +348,48 @@ function TVLobby() {
               <span className="text-yellow-400">📶 사내 Wi-Fi 연결</span>
               <span className="text-gray-400 font-normal hidden sm:inline">| 같은 공유기 연결 필요</span>
             </>
-          ) : (
+          ) : isTunnelAvailable ? (
             <>
               <span className="text-green-400">🌍 LTE / 5G / 외부 접속</span>
               <span className="text-gray-400 font-normal hidden sm:inline">| 어디서나 스캔 가능</span>
+            </>
+          ) : (
+            <>
+              <span className="text-yellow-400 animate-pulse">⚠️ 외부 터널 연결 대기 중</span>
+              <span className="text-gray-400 font-normal hidden sm:inline">| Wi-Fi 탭 이용 권장</span>
             </>
           )}
         </div>
 
         {/* QR 코드 본체 (260px 대형 크기) */}
-        <div className="bg-white p-5 rounded-3xl shadow-2xl">
-          <QRCodeSVG
-            value={activeJoinUrl}
-            size={260}
-            bgColor="#ffffff"
-            fgColor="#0B1426"
-            level="H"
-          />
-        </div>
+        {effectiveMode === 'tunnel' && !isTunnelAvailable ? (
+          <div className="bg-navy-dark/95 border border-gold/30 p-6 rounded-3xl shadow-2xl w-[260px] h-[260px] flex flex-col items-center justify-center text-center">
+            <span className="text-4xl mb-3 animate-spin">🔄</span>
+            <p className="text-gold font-bold text-sm mb-1.5">외부 공인 주소 연결 중</p>
+            <p className="text-gray-300 text-xs leading-relaxed mb-3">
+              같은 공간에 계신 분들은 상단의 <span className="text-yellow-400 font-bold">[📶 같은 Wi-Fi 접속]</span> 탭을 클릭하여 즉시 접속하세요.
+            </p>
+            <p className="text-[10px] text-gray-500 font-mono">
+              (PC에서 LTE_5G_외부접속_터널실행.bat 실행 시 즉시 연결)
+            </p>
+          </div>
+        ) : (
+          <div className="bg-white p-5 rounded-3xl shadow-2xl">
+            <QRCodeSVG
+              value={activeJoinUrl}
+              size={260}
+              bgColor="#ffffff"
+              fgColor="#0B1426"
+              level="H"
+            />
+          </div>
+        )}
 
         {/* 하단 접속 안내 및 주소 텍스트 */}
         <div className="mt-5 text-center w-full">
           <p className="text-gray-300 text-xs mb-1.5 font-medium">카메라 스캔 또는 모바일 브라우저 주소창 직접 입력</p>
           <div className="px-4 py-2 bg-navy-dark/95 rounded-xl border border-gold/30 font-mono text-sm md:text-base text-gold font-bold break-all select-all shadow-inner tracking-wide">
-            {activeJoinUrl}
+            {effectiveMode === 'tunnel' && !isTunnelAvailable ? '외부 터널 생성 대기 중... (Wi-Fi 탭 이용 권장)' : activeJoinUrl}
           </div>
         </div>
       </motion.div>

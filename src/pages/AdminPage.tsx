@@ -148,15 +148,23 @@ export default function AdminPage() {
       ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
       : 'http://192.168.40.111:5000/')
 
+  const isServerHostExternal = Boolean(
+    serverHostUrl &&
+    serverHostUrl.startsWith('http') &&
+    !serverHostUrl.includes('localhost') &&
+    !serverHostUrl.includes('127.0.0.1') &&
+    !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(serverHostUrl)
+  )
+
   const publicUrl = tunnelUrl
     ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
     : (isPublicDomain
       ? originUrl
-      : (serverHostUrl && serverHostUrl.startsWith('http')
+      : (isServerHostExternal
         ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
-        : originUrl))
+        : ''))
 
-  const [customUrlInput, setCustomUrlInput] = useState(isPublicDomain ? originUrl : wifiUrl)
+  const [customUrlInput, setCustomUrlInput] = useState(isPublicDomain ? originUrl : (publicUrl || wifiUrl))
 
   // 서버 정보 및 외부 터널 URL 실시간 연동 (3번 서바이벌 퀴즈 방식)
   useEffect(() => {
@@ -202,7 +210,7 @@ export default function AdminPage() {
     ? players.filter((p) => !currentResult.survivors.includes(p.id))
     : players.filter((p) => p.status === 'eliminated')
   const voteCount = Object.keys(votes).length
-  const joinUrl = serverHostUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
+  const joinUrl = qrMode === 'tunnel' ? (publicUrl || wifiUrl) : wifiUrl
 
   // 1. 투표 15초 타이머 (Voting Phase) - votingDeadline 기반 정확한 동기화 및 0초 도달 시 즉시 자동 마감
   const [votingTimeLeft, setVotingTimeLeft] = useState(timeLimit || 15)
@@ -891,11 +899,10 @@ export default function AdminPage() {
                     type="button"
                     onClick={() => {
                       setQrMode('wifi')
-                      setServerHostUrl(wifiUrl)
                       setCustomUrlInput(wifiUrl)
                     }}
                     className={`flex-1 px-2 py-1 rounded text-[11px] font-bold border transition-all ${
-                      (qrMode === 'wifi' || (!qrMode && !joinUrl.includes('serveousercontent') && !joinUrl.includes('lhr.life')))
+                      qrMode === 'wifi'
                         ? 'bg-gold text-navy-dark border-gold shadow-md shadow-gold/20'
                         : 'bg-navy border-gold/20 text-gray-300 hover:text-white'
                     }`}
@@ -907,19 +914,17 @@ export default function AdminPage() {
                     type="button"
                     onClick={() => {
                       setQrMode('tunnel')
-                      const target = tunnelUrl || publicUrl || customUrlInput
-                      if (target) {
-                        setServerHostUrl(target)
-                        setCustomUrlInput(target)
+                      if (publicUrl) {
+                        setCustomUrlInput(publicUrl)
                       }
                     }}
                     className={`flex-1 px-2 py-1 rounded text-[11px] font-bold border transition-all ${
-                      (qrMode === 'tunnel' || (!qrMode && isPublicDomain) || (!qrMode && (joinUrl.includes('serveousercontent') || joinUrl.includes('lhr.life'))))
+                      qrMode === 'tunnel'
                         ? 'bg-gold text-navy-dark border-gold shadow-md shadow-gold/20'
                         : 'bg-navy border-gold/20 text-gray-300 hover:text-white'
                     }`}
                   >
-                    🌍 어디서나(LTE/5G) 🟢
+                    🌍 어디서나(LTE/5G) {publicUrl ? '🟢' : '⚠️'}
                   </button>
                 </div>
 
