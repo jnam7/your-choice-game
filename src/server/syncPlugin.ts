@@ -2,6 +2,9 @@ import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
 import os from 'os'
+import events from 'events'
+
+events.EventEmitter.defaultMaxListeners = 500
 
 function getLocalNetworkIp() {
   try {
