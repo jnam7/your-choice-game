@@ -95,6 +95,115 @@ function broadcastState() {
   io.emit('state:sync', gameState)
 }
 
+// =========================================================
+// 서버 주도 상태 전환 관리자 (결과 공개 무한 루프 방지 및 단일 전환 보장)
+// =========================================================
+let resultTransitionTimer = null
+let usedQuestionIdsServer = new Set()
+
+// 서버 자체 질문 풀 (src/data/questions.ts와 동일한 데이터)
+const serverMajorityQuestions = [
+  { id: 1, category: '음식', optionA: '평생 치킨만 먹기', optionB: '평생 피자만 먹기', isFinals: false },
+  { id: 2, category: '음식', optionA: '탕수육 소스 부먹', optionB: '탕수육 소스 찍먹', isFinals: false },
+  { id: 3, category: '음식', optionA: '평생 탄산음료 없이 살기', optionB: '평생 라면 없이 살기', isFinals: false },
+  { id: 4, category: '음식', optionA: '아침 식사 평생 굶기', optionB: '야식 평생 굶기', isFinals: false },
+  { id: 5, category: '음식', optionA: '식후 아메리카노 영구 금지', optionB: '식후 달콤한 디저트 영구 금지', isFinals: false },
+  { id: 6, category: '음식', optionA: '삼겹살 평생 금지', optionB: '떡볶이 평생 금지', isFinals: false },
+  { id: 7, category: '음식', optionA: '평생 소고기만 먹기', optionB: '평생 돼지고기만 먹기', isFinals: false },
+  { id: 8, category: '음식', optionA: '무조건 맵고 자극적인 음식만 먹기', optionB: '무조건 싱겁고 담백한 음식만 먹기', isFinals: false },
+  { id: 9, category: '음식', optionA: '덜 익은 꼬들꼬들 라면 먹기', optionB: '푹 퍼지고 부드러운 라면 먹기', isFinals: false },
+  { id: 10, category: '음식', optionA: '평생 단 음식 금지', optionB: '평생 짠 음식 금지', isFinals: false },
+  { id: 11, category: '직장생활', optionA: '월요일 2시간 일찍 출근하기', optionB: '금요일 2시간 늦게 퇴근하기', isFinals: false },
+  { id: 12, category: '직장생활', optionA: '월급 300만원 정시 칼퇴근', optionB: '월급 500만원 매일 야근 2시간', isFinals: false },
+  { id: 13, category: '직장생활', optionA: '사내 식당 매일 고퀄리티 무료 제공', optionB: '매달 점심 식대 30만원 계좌 입금', isFinals: false },
+  { id: 14, category: '직장생활', optionA: '완벽한 능력 상사 + 힘든 업무', optionB: '일 못하는 무능 상사 + 쉬운 업무', isFinals: false },
+  { id: 15, category: '직장생활', optionA: '연봉 1,000만원 인상 + 주 6일 출근', optionB: '현재 연봉 그대로 유지 + 주 4일 출근', isFinals: false },
+  { id: 16, category: '직장생활', optionA: '일 잘하는데 성격 차가운 동료', optionB: '일 못하는데 한없이 착하고 친절한 동료', isFinals: false },
+  { id: 17, category: '직장생활', optionA: '전 사원 앞에서 박수받으며 우수사원 표창', optionB: '아무도 모르게 계좌로 특별 상여금 100만원 입금', isFinals: false },
+  { id: 18, category: '직장생활', optionA: '회식 1차에서 고기 먹고 9시 칼귀가', optionB: '회식 3차까지 대표님과 함께 달리기', isFinals: false },
+  { id: 19, category: '직장생활', optionA: '매주 월요일 아침 9시 전체 회의', optionB: '매주 금요일 오후 5시 주간 보고 회의', isFinals: false },
+  { id: 20, category: '직장생활', optionA: '1년 내내 모든 프로젝트 대성공', optionB: '1년 내내 평화롭게 월급 루팡 성공', isFinals: false },
+]
+
+const serverMinorityQuestions = [
+  { id: 101, category: '직장/곤란', optionA: '사무실 옆자리 쉼 없는 수다쟁이 동료', optionB: '사무실 옆자리 말 한마디 안 섞는 무반응 동료', isFinals: false },
+  { id: 102, category: '직장/곤란', optionA: '점심시간 칼같이 30분만 부여', optionB: '매일 출근 시간 1시간 앞당겨지기', isFinals: false },
+  { id: 103, category: '직장/곤란', optionA: '직속 팀장님 바로 앞에서 치명적 엑셀 실수', optionB: '대표님 주재 전사 타운홀 미팅에서 대놓고 졸기', isFinals: false },
+  { id: 104, category: '직장/곤란', optionA: '매주 금요일 사내 회식 필참 1년', optionB: '사내 모든 회식 및 부서 친목 영구 금지', isFinals: false },
+  { id: 105, category: '직장/곤란', optionA: '직속 상사 결혼식 단독 사회자 맡기', optionB: '직속 상사 부모님 칠순 잔치 단독 축가 부르기', isFinals: false },
+]
+
+function getNextServerQuestion(ruleMode) {
+  const pool = ruleMode === 'minority' ? serverMinorityQuestions : serverMajorityQuestions
+  let available = pool.filter((q) => !usedQuestionIdsServer.has(q.id))
+  if (available.length === 0) {
+    usedQuestionIdsServer.clear()
+    available = [...pool]
+  }
+  const picked = available[Math.floor(Math.random() * available.length)]
+  usedQuestionIdsServer.add(picked.id)
+  return picked
+}
+
+function clearResultTransition() {
+  if (resultTransitionTimer) {
+    clearTimeout(resultTransitionTimer)
+    resultTransitionTimer = null
+  }
+}
+
+// 결과 공개 단계 진입 시 서버에서 단 1번만 실행되는 5초 카운트다운 후 다음 단계 자동 진행
+function scheduleServerResultTransition() {
+  clearResultTransition()
+  console.log(`⏱️ [SERVER TRANSITION] 결과 공개 5초 후 서버 주도 상태 전환 예약됨`)
+
+  resultTransitionTimer = setTimeout(() => {
+    resultTransitionTimer = null
+    // 일시정지 중이거나 이미 결과 단계가 아니면 중단
+    if (gameState.phase !== 'result' || gameState.isPaused) {
+      return
+    }
+
+    // 생존자 계산
+    const alivePlayers = gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
+    console.log(`🏁 [SERVER TRANSITION] 5초 경과 -> 생존자 ${alivePlayers.length}명 판정`)
+
+    // 조건 A: 생존자가 2명 이하이거나 0명인 경우 -> gameover
+    if (alivePlayers.length <= 2) {
+      gameState.phase = 'gameover'
+      gameState.isGameOver = true
+      gameState.soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null
+      console.log(`🏆 [SERVER] 게임 종료! (생존자 ${alivePlayers.length}명, 우승자: ${gameState.soleWinnerId || '없음/공동'})`)
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('game:game_over', {
+        survivors: alivePlayers,
+        winnerCount: alivePlayers.length,
+        soleWinnerId: gameState.soleWinnerId,
+      })
+      return
+    }
+
+    // 조건 B: 생존자가 3명 이상인 경우 -> 다음 라운드 voting 카운트다운 시작
+    gameState.roundNumber += 1
+    gameState.votes = {}
+    gameState.currentResult = null
+    gameState.currentQuestion = getNextServerQuestion(gameState.ruleMode)
+    const limit = gameState.timeLimit || 15
+    gameState.phase = 'voting'
+    gameState.votingDeadline = Date.now() + limit * 1000
+    gameState.timeLeft = limit
+    console.log(`🚀 [SERVER] 다음 라운드(${gameState.roundNumber}) 시작! (제한시간: ${limit}초)`)
+
+    broadcastState()
+    io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+      roundNumber: gameState.roundNumber,
+      question: gameState.currentQuestion,
+      timeLimit: limit,
+      votingDeadline: gameState.votingDeadline,
+    })
+  }, 5000)
+}
+
 function broadcastPlayerJoined(player) {
   io.to(SOCKET_ROOM_MAIN).emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
   io.to(SOCKET_ROOM_MAIN).emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
@@ -106,6 +215,7 @@ function broadcastPlayerJoined(player) {
 
 function applyAdminSync(updates) {
   if (updates && typeof updates === 'object') {
+    const oldPhase = gameState.phase
     const { players: incomingPlayers, ...safeUpdates } = updates
     Object.assign(gameState, safeUpdates)
 
@@ -132,8 +242,18 @@ function applyAdminSync(updates) {
       gameState.currentResult = updates.currentResult
     }
 
-    console.log(`🔄 [STATE SYNC] Phase: ${gameState.phase}, Round: ${gameState.roundNumber}, Result: ${gameState.currentResult ? '있음' : '없음'}`)
+    console.log(`🔄 [STATE SYNC] Phase: ${oldPhase} -> ${gameState.phase}, Round: ${gameState.roundNumber}, Result: ${gameState.currentResult ? '있음' : '없음'}`)
     broadcastState()
+
+    // 결과 단계('result')로 진입했거나, 결과가 도착했을 때 서버 주도 5초 전환 예약
+    if (gameState.phase === 'result') {
+      if (oldPhase !== 'result' || !resultTransitionTimer) {
+        scheduleServerResultTransition()
+      }
+    } else {
+      // result 단계가 아니면(예: lobby, voting, gameover) 전환 타이머 취소
+      clearResultTransition()
+    }
   }
 }
 
@@ -369,6 +489,7 @@ io.on('connection', (socket) => {
   // 다음 라운드 진행
   socket.on('admin:next_round', (data, callback) => {
     try {
+      clearResultTransition()
       const alive = gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
       if (alive.length <= 2) {
         gameState.phase = 'gameover'
@@ -384,6 +505,8 @@ io.on('connection', (socket) => {
       gameState.currentResult = null
       if (data?.question) {
         gameState.currentQuestion = data.question
+      } else {
+        gameState.currentQuestion = getNextServerQuestion(gameState.ruleMode)
       }
       const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
       gameState.timeLimit = limit
@@ -406,6 +529,7 @@ io.on('connection', (socket) => {
 
   // 일시정지 및 재개
   const handlePause = () => {
+    clearResultTransition()
     gameState.isPaused = true
     if (gameState.phase === 'voting' && gameState.votingDeadline) {
       gameState.timeLeft = Math.max(0, Math.ceil((gameState.votingDeadline - Date.now()) / 1000))
@@ -431,6 +555,9 @@ io.on('connection', (socket) => {
       votingDeadline: gameState.votingDeadline,
     })
     console.log(`▶️ [GAME RESUMED] 게임 재개됨 (남은 시간: ${gameState.timeLeft}초)`)
+    if (gameState.phase === 'result') {
+      scheduleServerResultTransition()
+    }
   }
 
   socket.on('admin:pause_game', handlePause)
@@ -441,6 +568,7 @@ io.on('connection', (socket) => {
 
   // 관리자 대기실 복귀 및 게임 리셋 (3번 서바이벌 퀴즈 규격)
   socket.on('admin:reset_game', (callback) => {
+    clearResultTransition()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null
@@ -461,6 +589,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('admin:reset_game_keep_players', (callback) => {
+    clearResultTransition()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null
@@ -481,6 +610,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('admin:move_to_lobby', (callback) => {
+    clearResultTransition()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null

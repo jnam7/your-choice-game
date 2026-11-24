@@ -693,7 +693,6 @@ function TVVoting() {
 
 // ===== 4. TV 결과 공개 3초 서스펜스 카운트다운 (REVEALING) =====
 function TVRevealing() {
-  const { revealResult } = useGameStore()
   const [timeLeft, setTimeLeft] = useState(3)
 
   useEffect(() => {
@@ -702,14 +701,13 @@ function TVRevealing() {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer)
-          revealResult()
           return 0
         }
         return prev - 1
       })
     }, 1000)
     return () => clearInterval(timer)
-  }, [revealResult])
+  }, [])
 
   // 서스펜스 카운트다운(3..2..1) 텐션 드럼롤/서스펜스 사운드
   useEffect(() => {

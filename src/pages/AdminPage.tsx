@@ -255,7 +255,7 @@ export default function AdminPage() {
     return () => clearInterval(timer)
   }, [phase, isPaused, votingDeadline, endVoting])
 
-  // 2. 3초 결과 서스펜스 카운트다운 (Revealing Phase) - 3초 후 결과 자동 공개
+  // 2. 3초 결과 서스펜스 카운트다운 (Revealing Phase) - 3초 후 결과 공개 (서버에 위임하거나 1회만 호출)
   const [revealingTimeLeft, setRevealingTimeLeft] = useState(3)
 
   useEffect(() => {
@@ -269,7 +269,10 @@ export default function AdminPage() {
       setRevealingTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer)
-          revealResult()
+          // 클라이언트 중복 호출 방지: 이미 result 단계가 아니면 호출
+          if (useGameStore.getState().phase === 'revealing') {
+            revealResult()
+          }
           return 0
         }
         return prev - 1
@@ -279,35 +282,23 @@ export default function AdminPage() {
     return () => clearInterval(timer)
   }, [phase, isPaused, revealResult])
 
-  // 3. 결과 공개 후 5초 뒤 자동 다음 라운드 진행 (1~2명 남은 경우 자동 경기 종료 및 우승 발표)
+  // 3. 결과 공개(result) 단계는 서버(server.js)가 5초 타이머 후 다음 라운드 또는 게임오버로 단일 주도 전환
   const [autoAdvance, setAutoAdvance] = useState(true)
   const [resultCountdown, setResultCountdown] = useState(5)
 
   useEffect(() => {
-    if (phase !== 'result' || isPaused || !autoAdvance) {
+    if (phase !== 'result' || isPaused) {
       setResultCountdown(5)
-      return
-    }
-
-    // 생존자가 0명인 예외 상황에서만 자동 진행을 멈춤
-    if (currentResult && currentResult.survivors.length === 0) {
       return
     }
 
     setResultCountdown(5)
     const timer = setInterval(() => {
-      setResultCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer)
-          nextRound()
-          return 0
-        }
-        return prev - 1
-      })
+      setResultCountdown((prev) => (prev > 0 ? prev - 1 : 0))
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [phase, isPaused, autoAdvance, currentResult, nextRound])
+  }, [phase, isPaused])
 
   // 자동 진행 활성화 시 문제(question) 단계에서 멈추지 않고 2초 후 15초 투표 자동 시작
   useEffect(() => {
