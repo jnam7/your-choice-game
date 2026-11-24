@@ -6,7 +6,7 @@ import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
-import type { Player } from '../types/game'
+import type { Player, ChatMessage } from '../types/game'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -1065,12 +1065,71 @@ function TVGameOver() {
 
 // ===== TV 우측 약 22% 상시 고정 실시간 응원톡 패널 =====
 function TVLiveChatSidebar() {
-  const { chatMessages } = useGameStore()
+  const storeChatMessages = useGameStore((s) => s.chatMessages)
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const list = storeChatMessages || []
+    return [...list].reverse()
+  })
+
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
+  // 1. 소켓 룸(Room) 조인 확인 및 실시간 채팅 수신 리스너 등록
   useEffect(() => {
+    const roomId = 'room:survival_quiz_main'
+    socket.emit('join:room', { roomId })
+    socket.emit('join', roomId)
+
+    const handleChatMessage = (rawMsg: any) => {
+      if (!rawMsg) return
+      const text = ((rawMsg.text || rawMsg.message || '') + '').trim()
+      if (!text) return
+
+      const newMsg: ChatMessage = {
+        id: rawMsg.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        playerId: rawMsg.playerId || 'participant',
+        nickname: ((rawMsg.nickname || '참가자') + '').trim(),
+        message: text,
+        text,
+        timestamp: rawMsg.timestamp || Date.now(),
+        isNotice: Boolean(rawMsg.isNotice),
+        roomId: rawMsg.roomId || roomId,
+      }
+
+      // 함수형 업데이트로 실시간 수신 메시지 즉각 추가
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMsg.id)) return prev
+        const next = [...prev, newMsg]
+        return next.length > 50 ? next.slice(-50) : next
+      })
+
+      // 전역 스토어에도 동기화
+      useGameStore.getState().addChatMessage(newMsg)
+    }
+
+    socket.on('chat:message', handleChatMessage)
+    socket.on('chat:received', handleChatMessage)
+
+    return () => {
+      socket.off('chat:message', handleChatMessage)
+      socket.off('chat:received', handleChatMessage)
+    }
+  }, [])
+
+  // 관리자 채팅 초기화 동기화
+  useEffect(() => {
+    if (storeChatMessages.length === 0 && messages.length > 0) {
+      setMessages([])
+    }
+  }, [storeChatMessages.length])
+
+  // 2. 새 메시지 도착 시 스크롤 컨테이너 scrollTop = scrollHeight 및 scrollIntoView 보장
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chatMessages])
+  }, [messages])
 
   return (
     <div className="w-full h-full flex flex-col bg-slate-900/90 backdrop-blur border-l border-slate-800 shadow-2xl relative z-20">
@@ -1087,20 +1146,23 @@ function TVLiveChatSidebar() {
         </div>
         <div className="px-2 py-0.5 bg-gold/15 border border-gold/30 rounded-full flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-[10px] text-gold font-bold font-mono">{chatMessages.length}개</span>
+          <span className="text-[10px] text-gold font-bold font-mono">{messages.length}개</span>
         </div>
       </div>
 
       {/* 응원톡 메시지 목록 (자동 스크롤) */}
-      <div className="flex-1 p-3 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-        {chatMessages.length === 0 ? (
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 p-3 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+      >
+        {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 py-8 px-2">
             <span className="text-2xl mb-2 opacity-50">📱</span>
             <p className="text-xs font-medium">아직 도착한 메시지가 없습니다.</p>
             <p className="text-[10px] text-gray-600 mt-1">스마트폰 [응원톡]에서 작성해보세요!</p>
           </div>
         ) : (
-          [...chatMessages].reverse().map((msg, i) => {
+          messages.map((msg, i) => {
             const isNotice = Boolean(msg.isNotice)
             return (
               <motion.div
@@ -1115,7 +1177,7 @@ function TVLiveChatSidebar() {
                 }`}
               >
                 <div className="flex items-center justify-between mb-0.5 gap-1">
-                  <span className={`text-[11px] font-bold truncate ${isNotice ? 'text-amber-400' : 'text-gold'}`}>
+                  <span className={`text-[11px] font-bold truncate max-w-[100px] ${isNotice ? 'text-amber-400' : 'text-gold'}`}>
                     {isNotice ? '📢 공지' : msg.nickname}
                   </span>
                   <span className="text-[9px] text-gray-500 font-mono shrink-0">

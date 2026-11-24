@@ -154,10 +154,32 @@ export function useSocketSync() {
     }
 
     const handleConnect = () => {
+      socket.emit('join:room', { roomId: 'room:survival_quiz_main' })
+      socket.emit('join', 'room:survival_quiz_main')
       fetchLatestState()
     }
 
+    const handleIncomingChatMessage = (rawMsg: any) => {
+      if (!rawMsg) return
+      const text = ((rawMsg.text || rawMsg.message || '') + '').trim()
+      if (!text) return
+
+      const formatted = {
+        id: rawMsg.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        playerId: rawMsg.playerId || 'participant',
+        nickname: rawMsg.nickname || '참가자',
+        message: text,
+        text: text,
+        timestamp: rawMsg.timestamp || Date.now(),
+        isNotice: Boolean(rawMsg.isNotice),
+        roomId: rawMsg.roomId || 'room:survival_quiz_main',
+      }
+      useGameStore.getState().addChatMessage(formatted)
+    }
+
     socket.on('connect', handleConnect)
+    socket.on('chat:message', handleIncomingChatMessage)
+    socket.on('chat:received', handleIncomingChatMessage)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
     socket.on('admin:sync', handleStateSync)
@@ -184,6 +206,8 @@ export function useSocketSync() {
     return () => {
       clearInterval(pollInterval)
       socket.off('connect', handleConnect)
+      socket.off('chat:message', handleIncomingChatMessage)
+      socket.off('chat:received', handleIncomingChatMessage)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
       socket.off('admin:sync', handleStateSync)

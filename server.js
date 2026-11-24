@@ -432,6 +432,18 @@ io.on('connection', (socket) => {
   // 메인 룸 자동 조인
   socket.join(SOCKET_ROOM_MAIN)
 
+  // 룸 조인 이벤트 수신 (join:room 및 join)
+  socket.on('join:room', (data) => {
+    const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+    socket.join(targetRoom)
+    socket.join(SOCKET_ROOM_MAIN)
+  })
+  socket.on('join', (data) => {
+    const targetRoom = typeof data === 'string' ? data : (data?.roomId || SOCKET_ROOM_MAIN)
+    socket.join(targetRoom)
+    socket.join(SOCKET_ROOM_MAIN)
+  })
+
   // 최초 접속 시 현재 상태 즉시 전달 (3번 규격: game:state_sync)
   socket.emit('game:state_sync', gameState)
   socket.emit('state:sync', gameState)
@@ -836,26 +848,41 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 실시간 사내 응원 채팅 (chat:send)
-  socket.on('chat:send', (data) => {
+  // 실시간 사내 응원 채팅 (chat:message 및 chat:send 완벽 지원)
+  const handleIncomingChatMessage = (data) => {
     try {
-      const { nickname, message } = data || {}
-      if (nickname && message) {
+      const text = ((data?.text || data?.message || '') + '').trim()
+      const nickname = ((data?.nickname || '익명') + '').trim()
+      const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+
+      if (text) {
         const msg = {
-          id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-          nickname,
-          message,
-          timestamp: Date.now(),
+          id: data?.id || ('msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+          playerId: data?.playerId || socket.id,
+          nickname: nickname || '참가자',
+          text,
+          message: text,
+          timestamp: data?.timestamp || Date.now(),
+          isNotice: Boolean(data?.isNotice),
+          roomId: targetRoom,
         }
         gameState.chatMessages.push(msg)
         if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
-        io.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+
+        // 대상 룸 및 메인 룸, 전체 브로드캐스트로 100% 실시간 수신 보장
+        if (targetRoom) io.to(targetRoom).emit('chat:message', msg)
         io.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+        io.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+        io.emit('chat:message', msg)
+        io.emit('chat:received', msg)
       }
     } catch (e) {
-      console.error('[chat:send Error]', e)
+      console.error('[chat error]', e)
     }
-  })
+  }
+
+  socket.on('chat:message', handleIncomingChatMessage)
+  socket.on('chat:send', handleIncomingChatMessage)
 
   // 관리자 외부 접속 URL 수동 설정 (admin:update_server_url)
   socket.on('admin:action', (data) => {

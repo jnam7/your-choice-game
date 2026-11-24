@@ -60,8 +60,10 @@ export interface ChatMessage {
   playerId: string
   nickname: string
   message: string
+  text?: string
   timestamp: number
   isNotice?: boolean
+  roomId?: string
 }
 
 export interface GameState {
@@ -131,6 +133,7 @@ export interface GameActions {
 
   // 실시간 채팅
   sendChatMessage: (message: string) => void
+  addChatMessage: (msg: ChatMessage) => void
   clearChatMessages: () => void
 
   // 문제 관리 (추가, 수정, 삭제, 시드)

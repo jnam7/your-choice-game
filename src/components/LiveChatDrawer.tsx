@@ -1,12 +1,17 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '../store/gameStore'
+import { socket } from '../socket'
 
 export function LiveChatDrawer() {
   const [isOpen, setIsOpen] = useState(false)
   const [text, setText] = useState('')
   const { chatMessages, sendChatMessage, currentPlayerId } = useGameStore()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    socket.emit('join:room', { roomId: 'room:survival_quiz_main' })
+  }, [])
 
   const quickReactions = ['A 가자! 🔥', 'B 가자! 🚀', '살았다! 🎉', '아 탈락 ㅠㅠ 💀', 'ㅋㅋㅋ', '대박']
 

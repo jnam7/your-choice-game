@@ -668,21 +668,52 @@ export function syncPlugin(): Plugin {
         }
       })
 
-      socket.on('chat:send', (data) => {
-        const { nickname, message } = data || {}
-        if (nickname && message) {
-          const msg = {
-            id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-            nickname,
-            message,
-            timestamp: Date.now(),
-          }
-          gameState.chatMessages.push(msg)
-          if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
-          ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
-          ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
-        }
+      // 룸 조인 이벤트 수신
+      socket.on('join:room', (data: any) => {
+        const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+        socket.join(targetRoom)
+        socket.join(SOCKET_ROOM_MAIN)
       })
+      socket.on('join', (data: any) => {
+        const targetRoom = typeof data === 'string' ? data : (data?.roomId || SOCKET_ROOM_MAIN)
+        socket.join(targetRoom)
+        socket.join(SOCKET_ROOM_MAIN)
+      })
+
+      // 실시간 사내 응원 채팅 (chat:message 및 chat:send 완벽 지원)
+      const handleIncomingChatMessage = (data: any) => {
+        try {
+          const text = ((data?.text || data?.message || '') + '').trim()
+          const nickname = ((data?.nickname || '익명') + '').trim()
+          const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+
+          if (text) {
+            const msg = {
+              id: data?.id || ('msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+              playerId: data?.playerId || socket.id,
+              nickname: nickname || '참가자',
+              text,
+              message: text,
+              timestamp: data?.timestamp || Date.now(),
+              isNotice: Boolean(data?.isNotice),
+              roomId: targetRoom,
+            }
+            gameState.chatMessages.push(msg)
+            if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
+
+            if (targetRoom) ioInstance?.to(targetRoom).emit('chat:message', msg)
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+            ioInstance?.emit('chat:message', msg)
+            ioInstance?.emit('chat:received', msg)
+          }
+        } catch (e) {
+          console.error('[chat error]', e)
+        }
+      }
+
+      socket.on('chat:message', handleIncomingChatMessage)
+      socket.on('chat:send', handleIncomingChatMessage)
 
       socket.on('admin:update_server_url', (newUrl) => {
         if (newUrl && typeof newUrl === 'string') {

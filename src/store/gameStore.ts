@@ -229,15 +229,50 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         playerId: currentPlayerId || 'admin',
         nickname,
         message: trimmed,
+        text: trimmed,
         timestamp: Date.now(),
         isNotice: !currentPlayerId,
+        roomId: 'room:survival_quiz_main',
       }
 
-      set((state) => ({
-        chatMessages: [newMsg, ...state.chatMessages].slice(0, 50),
-      }))
+      set((state) => {
+        if (state.chatMessages.some((m) => m.id === newMsg.id)) return state
+        return {
+          chatMessages: [newMsg, ...state.chatMessages].slice(0, 50),
+        }
+      })
 
-      socket.emit('chat:send', { nickname, message: trimmed })
+      // 소켓 양방향 이벤트 발행: chat:message 및 chat:send
+      const payload = {
+        id: newMsg.id,
+        playerId: newMsg.playerId,
+        nickname,
+        text: trimmed,
+        message: trimmed,
+        roomId: 'room:survival_quiz_main',
+        timestamp: newMsg.timestamp,
+        isNotice: newMsg.isNotice,
+      }
+      socket.emit('chat:message', payload)
+      socket.emit('chat:send', payload)
+
+      if (chatChannel) {
+        try {
+          chatChannel.postMessage({ type: 'NEW_CHAT_MESSAGE', message: newMsg })
+        } catch (e) {}
+      }
+
+      persist()
+    },
+
+    addChatMessage: (msg: ChatMessage) => {
+      if (!msg) return
+      set((state) => {
+        if (state.chatMessages.some((m) => m.id === msg.id)) return state
+        return {
+          chatMessages: [msg, ...state.chatMessages].slice(0, 50),
+        }
+      })
       persist()
     },
 
