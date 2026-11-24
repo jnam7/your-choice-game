@@ -1170,11 +1170,49 @@ export default function TVPage() {
     return 0.6
   })
 
+  // BGM 오디오 객체 및 페이드인 타이머 참조
+  const fadeIntervalRef = useRef<any>(null)
+  const lastTickSecondRef = useRef<number>(-1)
+
+  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지)
+  const fadeInBgm = (targetVolume: number) => {
+    const audio = bgmRef.current
+    if (!audio) return
+    if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
+
+    audio.volume = 0
+    const playPromise = audio.play()
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          let currentStep = 0
+          const totalSteps = 10
+          const stepInterval = 25 // 25ms * 10 = 250ms 페이드인
+          fadeIntervalRef.current = setInterval(() => {
+            currentStep++
+            if (!bgmRef.current) {
+              clearInterval(fadeIntervalRef.current)
+              return
+            }
+            const ratio = Math.min(1, currentStep / totalSteps)
+            bgmRef.current.volume = targetVolume * ratio
+            if (currentStep >= totalSteps) {
+              clearInterval(fadeIntervalRef.current)
+              fadeIntervalRef.current = null
+            }
+          }, stepInterval)
+        })
+        .catch((err) => {
+          console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
+        })
+    }
+  }
+
   // BGM 오디오 객체 초기화
   useEffect(() => {
     const audio = new Audio('/audio/bgm.mp3')
     audio.loop = true
-    audio.volume = bgmEnabled ? bgmVolume : 0
+    audio.volume = 0
     bgmRef.current = audio
 
     audio.onerror = () => {
@@ -1186,6 +1224,7 @@ export default function TVPage() {
     }
 
     return () => {
+      if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
       audio.pause()
       audio.currentTime = 0
       bgmRef.current = null
@@ -1194,7 +1233,7 @@ export default function TVPage() {
 
   // 볼륨 및 음소거 설정 실시간 동기화
   useEffect(() => {
-    if (bgmRef.current) {
+    if (bgmRef.current && !fadeIntervalRef.current) {
       bgmRef.current.volume = bgmEnabled ? bgmVolume : 0
     }
     if (typeof window !== 'undefined') {
@@ -1203,22 +1242,33 @@ export default function TVPage() {
     }
   }, [bgmEnabled, bgmVolume])
 
-  // 5초 남았을 때 BGM 오디오 더킹 (Audio Ducking: 기존 대비 약 30% 수준으로 부드럽게 감쇠)
+  // 5초 남았을 때 BGM 오디오 더킹 (25%로 감쇠) 및 5, 4, 3, 2, 1 카운트다운 시계음 연동
   useEffect(() => {
     const audio = bgmRef.current
-    if (!audio) return
-
     const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-    if (!isBgmPhase || !bgmEnabled) return
 
-    // 카운트다운 타이머가 5초 이하로 떨어져 시간 임박 경고 효과음(Tick-Tock) 출력 시 BGM 볼륨 30%로 감쇠
-    const isDucking = phase === 'voting' && timeLeft <= 5 && timeLeft > 0
-    const targetVol = isDucking ? bgmVolume * 0.3 : bgmVolume
+    if (phase === 'voting' && timeLeft <= 5 && timeLeft > 0) {
+      // BGM 볼륨 25%로 더킹
+      if (audio && bgmEnabled && !fadeIntervalRef.current) {
+        audio.volume = Math.max(0, Math.min(1, bgmVolume * 0.25))
+      }
 
-    audio.volume = Math.max(0, Math.min(1, targetVol))
+      // 5, 4, 3, 2, 1초마다 초침 효과음 1회 재생
+      if (lastTickSecondRef.current !== timeLeft) {
+        lastTickSecondRef.current = timeLeft
+        playCountdownTick(timeLeft <= 3)
+      }
+    } else {
+      if (audio && isBgmPhase && bgmEnabled && !fadeIntervalRef.current) {
+        audio.volume = bgmVolume
+      }
+      if (timeLeft > 5 || phase !== 'voting') {
+        lastTickSecondRef.current = -1
+      }
+    }
   }, [phase, timeLeft, bgmEnabled, bgmVolume])
 
-  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지 및 볼륨 리셋
+  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지 및 볼륨 리셋 (팝 노이즈 방지 페이드인 적용)
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
@@ -1227,19 +1277,19 @@ export default function TVPage() {
     const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
 
     if (isBgmPhase) {
-      audio.currentTime = 0
-      audio.volume = bgmEnabled ? bgmVolume : 0
-      const playPromise = audio.play()
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
-        })
+      if (bgmEnabled) {
+        audio.currentTime = 0
+        fadeInBgm(bgmVolume)
       }
     } else {
+      if (fadeIntervalRef.current) {
+        clearInterval(fadeIntervalRef.current)
+        fadeIntervalRef.current = null
+      }
       audio.pause()
       audio.currentTime = 0
-      // 단계 전환 또는 시간 종료 시 기본 볼륨으로 초기화
       audio.volume = bgmEnabled ? bgmVolume : 0
+      lastTickSecondRef.current = -1
     }
   }, [phase, bgmEnabled, bgmVolume])
 

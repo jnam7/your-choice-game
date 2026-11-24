@@ -473,7 +473,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       set({
         currentQuestion: selected,
         usedQuestionIds: updatedUsedQuestionIds,
-        phase: 'question',
         votes: {},
         currentResult: null,
         isPaused: false,

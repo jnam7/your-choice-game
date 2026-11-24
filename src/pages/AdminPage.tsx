@@ -309,6 +309,16 @@ export default function AdminPage() {
     return () => clearInterval(timer)
   }, [phase, isPaused, autoAdvance, currentResult, nextRound])
 
+  // 자동 진행 활성화 시 문제(question) 단계에서 멈추지 않고 2초 후 15초 투표 자동 시작
+  useEffect(() => {
+    if (phase === 'question' && autoAdvance && !isPaused) {
+      const timer = setTimeout(() => {
+        startVoting(timeLimit || 15)
+      }, 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [phase, autoAdvance, isPaused, startVoting, timeLimit])
+
   const handleStartVoting = () => {
     startVoting(timeLimit)
   }
@@ -628,7 +638,7 @@ export default function AdminPage() {
                     className="w-full py-4 bg-gradient-to-r from-green-600 via-green-500 to-emerald-400 text-white
                                font-display text-2xl rounded-xl hover:shadow-lg hover:shadow-green-500/30 transition-all font-bold animate-pulse"
                   >
-                    ⏱️ {timeLimit}초 투표 시작하기
+                    ⏱️ {autoAdvance ? `자동 카운트다운 시작 대기 중 (또는 즉시 시작)` : `${timeLimit}초 투표 시작하기`}
                   </button>
                 </div>
               )}
