@@ -549,16 +549,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     // 일시정지 및 재개
     pauseGame: () => {
       clearDummyVoteTimers()
-      set({ isPaused: true })
+      const { phase, votingDeadline, timeLeft } = get()
+      let currentRemaining = timeLeft
+      if (phase === 'voting' && votingDeadline) {
+        currentRemaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
+      }
+      set({ isPaused: true, timeLeft: currentRemaining })
       persist()
+      socket.emit('admin:pause')
       socket.emit('admin:pause_game')
     },
 
     resumeGame: () => {
       const { timeLeft } = get()
-      const newDeadline = Date.now() + timeLeft * 1000
+      const newDeadline = Date.now() + (timeLeft || 15) * 1000
       set({ isPaused: false, votingDeadline: newDeadline })
       persist()
+      socket.emit('admin:resume')
       socket.emit('admin:resume_game')
     },
 

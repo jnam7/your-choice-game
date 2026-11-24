@@ -543,8 +543,15 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
     return timeLeft || total
   })
 
-  // 실시간 15초 카운트다운 (200ms 주기로 계산하여 모바일에서 실시간으로 초가 줄어듦)
+  // 실시간 15초 카운트다운 (200ms 주기로 계산하여 모바일에서 실시간으로 초가 줄어듦, isPaused 시 정지)
   useEffect(() => {
+    if (isPaused) {
+      if (timeLeft !== undefined) {
+        setRemaining(timeLeft)
+      }
+      return
+    }
+
     const calc = () => {
       if (votingDeadline) {
         const sec = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
@@ -556,7 +563,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
     calc()
     const timer = setInterval(calc, 200)
     return () => clearInterval(timer)
-  }, [votingDeadline, timeLeft])
+  }, [votingDeadline, timeLeft, isPaused])
 
   const handleVote = (choice: 'A' | 'B') => {
     if (isEliminated || selected || myVote || !effectiveId || isPaused || remaining <= 0) return

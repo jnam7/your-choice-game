@@ -15,6 +15,7 @@ import {
   playDrumRoll,
   playResultReveal,
   playGameoverFanfare,
+  stopAllSounds,
 } from '../utils/sound'
 
 // ===== 전체화면 전환 토글 버튼 =====
@@ -64,6 +65,8 @@ function FullscreenButton() {
 function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNumber?: number; category?: string; isFinals?: boolean; customRuleMode?: 'majority' | 'minority' }) {
   const storeRuleMode = useGameStore((s) => s.ruleMode)
   const currentMode = customRuleMode || storeRuleMode || 'majority'
+  const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
 
   return (
     <header className="relative flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
@@ -89,7 +92,8 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      {/* 우측 상단 인라인 Flex 컨테이너: [ROUND 표시] ➔ [접속자 수] ➔ [전체화면 버튼] */}
+      <div className="flex flex-row items-center gap-3">
         {isFinals && (
           <span className="px-3 py-1 bg-orange-600/30 border border-orange-500 rounded-full text-orange-400 font-bold text-xs animate-pulse">
             ⚡ FINALS
@@ -107,6 +111,15 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
             )}
           </div>
         )}
+
+        {/* 접속자 수 배지 */}
+        <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
+          <span>👥 접속</span>
+          <span className="font-mono text-white">{playerList.length}명</span>
+        </div>
+
+        {/* 전체화면 버튼 */}
+        <FullscreenButton />
       </div>
     </header>
   )
@@ -520,12 +533,15 @@ function TVVoting() {
   const timeLimit = useGameStore((s) => s.timeLimit)
   const votingDeadline = useGameStore((s) => s.votingDeadline)
   const ruleMode = useGameStore((s) => s.ruleMode)
+  const isPaused = useGameStore((s) => s.isPaused)
   const alivePlayers = playerList.filter((p) => p && p.status === 'alive')
   const voteCount = Object.keys(votes).length
 
   const [timeLeft, setTimeLeft] = useState(timeLimit || 15)
 
   useEffect(() => {
+    if (isPaused) return
+
     const tick = () => {
       if (votingDeadline) {
         const remaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
@@ -546,7 +562,7 @@ function TVVoting() {
     tick()
     const timer = setInterval(tick, 250)
     return () => clearInterval(timer)
-  }, [votingDeadline, endVoting])
+  }, [votingDeadline, endVoting, isPaused])
 
   // 투표 마감 5초 전 매초 카운트다운 틱 효과음 (3초 이하는 긴박한 비프음)
   useEffect(() => {
@@ -1031,6 +1047,7 @@ export default function TVPage() {
   useSocketSync()
 
   const phase = useGameStore((s) => s.phase)
+  const isPaused = useGameStore((s) => s.isPaused)
   const timeLeft = useGameStore((s) => s.timeLeft)
   const players = useGameStore((s) => s.players)
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
@@ -1084,7 +1101,7 @@ export default function TVPage() {
     }
   }, [])
 
-  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지 & 중복 play 방지)
+  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지 & 버퍼 찌꺼기 완벽 차단)
   const fadeInBgm = (targetVolume: number) => {
     const audio = bgmRef.current
     if (!audio) return
@@ -1099,31 +1116,42 @@ export default function TVPage() {
       return
     }
 
+    // 1) 이전 오디오의 버퍼 찌꺼기 튐을 물리적으로 차단하기 위해 먼저 muted = true로 만들고 0초로 설정
+    audio.muted = true
     audio.volume = 0
+    audio.currentTime = 0
+
     const playPromise = audio.play()
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
           isPlayingRef.current = true
-          let currentStep = 0
-          const totalSteps = 10
-          const stepInterval = 25 // 25ms * 10 = 250ms 페이드인
-          fadeIntervalRef.current = setInterval(() => {
-            currentStep++
-            if (!bgmRef.current) {
-              clearInterval(fadeIntervalRef.current)
-              return
-            }
-            const ratio = Math.min(1, currentStep / totalSteps)
-            bgmRef.current.volume = targetVolume * ratio
-            if (currentStep >= totalSteps) {
-              clearInterval(fadeIntervalRef.current)
-              fadeIntervalRef.current = null
-            }
-          }, stepInterval)
+          // 2) 재생이 정상 궤도에 오른 직후인 약 50ms(0.05초) 뒤에 muted 해제 및 페이드인 시작
+          setTimeout(() => {
+            if (!bgmRef.current || !isPlayingRef.current) return
+            bgmRef.current.muted = false
+
+            let currentStep = 0
+            const totalSteps = 10
+            const stepInterval = 25 // 25ms * 10 = 250ms 페이드인
+            fadeIntervalRef.current = setInterval(() => {
+              currentStep++
+              if (!bgmRef.current) {
+                clearInterval(fadeIntervalRef.current)
+                return
+              }
+              const ratio = Math.min(1, currentStep / totalSteps)
+              bgmRef.current.volume = targetVolume * ratio
+              if (currentStep >= totalSteps) {
+                clearInterval(fadeIntervalRef.current)
+                fadeIntervalRef.current = null
+              }
+            }, stepInterval)
+          }, 50)
         })
         .catch((err) => {
           isPlayingRef.current = false
+          if (audio) audio.muted = false
           console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
         })
     }
@@ -1177,26 +1205,36 @@ export default function TVPage() {
     }
   }, [timeLeft, phase, masterVolume])
 
-  // 2. 게임 페이즈(단계)에 따른 BGM 재생 및 완전 정지/초기화 (중복 재생 및 툭툭 씹힘 원천 방지)
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지 및 완전 초기화 (잔향 찌꺼기 완벽 차단)
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
+
+    // 일시정지 상태인 경우 BGM 즉시 일시정지
+    if (isPaused) {
+      if (fadeIntervalRef.current) {
+        clearInterval(fadeIntervalRef.current)
+        fadeIntervalRef.current = null
+      }
+      audio.pause()
+      isPlayingRef.current = false
+      return
+    }
 
     // 투표/질문 단계 (voting, question, playing)
     const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
 
     if (isBgmPhase) {
       if (bgmEnabled) {
-        // 이미 재생 중이면 currentTime을 건드리지 않고 그대로 유지
+        // 일시정지 후 재개이거나 처음 재생 시
         if (audio.paused || !isPlayingRef.current) {
-          audio.currentTime = 0
           fadeInBgm(masterVolume)
         } else {
           audio.volume = masterVolume
         }
       }
     } else {
-      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 즉시 완전 정지
+      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 즉시 완전 정지 및 사운드 클린업
       if (fadeIntervalRef.current) {
         clearInterval(fadeIntervalRef.current)
         fadeIntervalRef.current = null
@@ -1206,8 +1244,9 @@ export default function TVPage() {
       audio.volume = masterVolume
       isPlayingRef.current = false
       lastTickSecondRef.current = -1
+      stopAllSounds()
     }
-  }, [phase, bgmEnabled, masterVolume])
+  }, [phase, isPaused, bgmEnabled, masterVolume])
 
   // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락 및 BGM 활성화
   useEffect(() => {
@@ -1268,14 +1307,16 @@ export default function TVPage() {
 
   return (
     <div className="min-h-screen bg-navy text-white overflow-hidden relative select-none">
-      {/* 우측 상단 플로팅 툴바 (참가자 수 배지 + 전체화면 토글만 깔끔하게 배치) */}
-      <div className="fixed top-5 right-5 z-50 flex items-center gap-2">
-        <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
-          <span>👥 접속</span>
-          <span className="font-mono text-white">{playerList.length}명</span>
+      {/* 로비 페이즈가 아닐 때는 TVHeader 내부에 우측 상단 툴바가 배치되며, 로비 페이즈일 때만 플로팅 배치 */}
+      {phase === 'lobby' && (
+        <div className="fixed top-5 right-5 z-50 flex items-center gap-3">
+          <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
+            <span>👥 접속</span>
+            <span className="font-mono text-white">{playerList.length}명</span>
+          </div>
+          <FullscreenButton />
         </div>
-        <FullscreenButton />
-      </div>
+      )}
       <TVLiveChatTicker />
       <div className="scanline-overlay" />
 

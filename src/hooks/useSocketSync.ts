@@ -99,6 +99,21 @@ export function useSocketSync() {
       })
     }
 
+    const handlePaused = (data: any) => {
+      syncWithServer({
+        isPaused: true,
+        ...(typeof data?.timeLeft === 'number' ? { timeLeft: data.timeLeft } : {}),
+      })
+    }
+
+    const handleResumed = (data: any) => {
+      syncWithServer({
+        isPaused: false,
+        ...(typeof data?.timeLeft === 'number' ? { timeLeft: data.timeLeft } : {}),
+        ...(data?.votingDeadline ? { votingDeadline: data.votingDeadline } : {}),
+      })
+    }
+
     const handleTunnelUpdated = (newTunnelUrl: string) => {
       if (newTunnelUrl && newTunnelUrl.startsWith('http')) {
         setServerHostUrl(newTunnelUrl)
@@ -152,6 +167,8 @@ export function useSocketSync() {
     socket.on('game:round_started', handleRoundStarted)
     socket.on('game:force_lobby', handleForceLobby)
     socket.on('game:set_reset', handleForceLobby)
+    socket.on('game:paused', handlePaused)
+    socket.on('game:resumed', handleResumed)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
 
     // 마운트 시 즉시 최신 상태 가져오기
@@ -176,6 +193,8 @@ export function useSocketSync() {
       socket.off('game:round_started', handleRoundStarted)
       socket.off('game:force_lobby', handleForceLobby)
       socket.off('game:set_reset', handleForceLobby)
+      socket.off('game:paused', handlePaused)
+      socket.off('game:resumed', handleResumed)
       socket.off('server:tunnel_updated', handleTunnelUpdated)
     }
   }, [syncWithServer, setServerHostUrl])

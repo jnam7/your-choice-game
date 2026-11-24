@@ -405,18 +405,39 @@ io.on('connection', (socket) => {
   })
 
   // 일시정지 및 재개
-  socket.on('admin:pause_game', () => {
+  const handlePause = () => {
     gameState.isPaused = true
+    if (gameState.phase === 'voting' && gameState.votingDeadline) {
+      gameState.timeLeft = Math.max(0, Math.ceil((gameState.votingDeadline - Date.now()) / 1000))
+    }
     broadcastState()
-  })
+    io.to(SOCKET_ROOM_MAIN).emit('game:paused', { timeLeft: gameState.timeLeft })
+    io.emit('game:paused', { timeLeft: gameState.timeLeft })
+    console.log(`⏸️ [GAME PAUSED] 일시정지됨 (남은 시간: ${gameState.timeLeft}초)`)
+  }
 
-  socket.on('admin:resume_game', () => {
+  const handleResume = () => {
     gameState.isPaused = false
     if (gameState.phase === 'voting' && gameState.timeLeft > 0) {
       gameState.votingDeadline = Date.now() + gameState.timeLeft * 1000
     }
     broadcastState()
-  })
+    io.to(SOCKET_ROOM_MAIN).emit('game:resumed', {
+      timeLeft: gameState.timeLeft,
+      votingDeadline: gameState.votingDeadline,
+    })
+    io.emit('game:resumed', {
+      timeLeft: gameState.timeLeft,
+      votingDeadline: gameState.votingDeadline,
+    })
+    console.log(`▶️ [GAME RESUMED] 게임 재개됨 (남은 시간: ${gameState.timeLeft}초)`)
+  }
+
+  socket.on('admin:pause_game', handlePause)
+  socket.on('admin:pause', handlePause)
+
+  socket.on('admin:resume_game', handleResume)
+  socket.on('admin:resume', handleResume)
 
   // 관리자 대기실 복귀 및 게임 리셋 (3번 서바이벌 퀴즈 규격)
   socket.on('admin:reset_game', (callback) => {

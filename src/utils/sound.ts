@@ -33,6 +33,18 @@ export function unlockAudioContext(): void {
   }
 }
 
+// 모든 활성 오디오 노드 및 컨텍스트 정리 (잔향 찌꺼기 완벽 차단)
+export function stopAllSounds(): void {
+  if (audioCtx && audioCtx.state !== 'closed') {
+    try {
+      // AudioContext의 시간을 suspend -> resume하여 재생 대기/진행 중인 스케줄링 노드를 즉시 차단
+      audioCtx.suspend().then(() => {
+        audioCtx?.resume().catch(() => {})
+      }).catch(() => {})
+    } catch {}
+  }
+}
+
 // 음소거 제어
 export function isSoundMuted(): boolean {
   return isMutedState
