@@ -1063,7 +1063,7 @@ function TVGameOver() {
   )
 }
 
-// ===== TV 우측 1/3 상시 고정 실시간 응원톡 패널 =====
+// ===== TV 우측 약 22% 상시 고정 실시간 응원톡 패널 =====
 function TVLiveChatSidebar() {
   const { chatMessages } = useGameStore()
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -1075,29 +1075,29 @@ function TVLiveChatSidebar() {
   return (
     <div className="w-full h-full flex flex-col bg-slate-900/90 backdrop-blur border-l border-slate-800 shadow-2xl relative z-20">
       {/* 응원톡 헤더 */}
-      <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl">💬</span>
+      <div className="px-3.5 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">💬</span>
           <div>
-            <h2 className="font-display text-base text-gold font-bold tracking-wide">
+            <h2 className="font-display text-sm md:text-base text-gold font-bold tracking-wide">
               실시간 응원톡
             </h2>
-            <p className="text-[11px] text-gray-400 font-medium">모바일에서 보낸 메시지가 실시간으로 올라옵니다</p>
+            <p className="text-[10px] text-gray-400 font-medium">실시간 응원 메시지</p>
           </div>
         </div>
-        <div className="px-2.5 py-1 bg-gold/15 border border-gold/30 rounded-full flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-[11px] text-gold font-bold font-mono">{chatMessages.length}개</span>
+        <div className="px-2 py-0.5 bg-gold/15 border border-gold/30 rounded-full flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[10px] text-gold font-bold font-mono">{chatMessages.length}개</span>
         </div>
       </div>
 
       {/* 응원톡 메시지 목록 (자동 스크롤) */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-3 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+      <div className="flex-1 p-3 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
         {chatMessages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 py-12">
-            <span className="text-3xl mb-2 opacity-50">📱</span>
-            <p className="text-sm font-medium">아직 도착한 응원 메시지가 없습니다.</p>
-            <p className="text-xs text-gray-600 mt-1">스마트폰 화면 하단 [사내 응원톡]에서 메시지를 남겨보세요!</p>
+          <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 py-8 px-2">
+            <span className="text-2xl mb-2 opacity-50">📱</span>
+            <p className="text-xs font-medium">아직 도착한 메시지가 없습니다.</p>
+            <p className="text-[10px] text-gray-600 mt-1">스마트폰 [응원톡]에서 작성해보세요!</p>
           </div>
         ) : (
           [...chatMessages].reverse().map((msg, i) => {
@@ -1105,24 +1105,24 @@ function TVLiveChatSidebar() {
             return (
               <motion.div
                 key={msg.id || i}
-                initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                initial={{ opacity: 0, y: 8, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.2 }}
-                className={`p-3 rounded-2xl border transition-all ${
+                className={`p-2.5 rounded-xl border transition-all ${
                   isNotice
                     ? 'bg-amber-950/40 border-amber-600/50 text-amber-200'
                     : 'bg-slate-800/80 border-slate-700/80 shadow-md'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <span className={`text-xs font-bold ${isNotice ? 'text-amber-400' : 'text-gold'}`}>
-                    {isNotice ? '📢 관리자 공지' : msg.nickname}
+                <div className="flex items-center justify-between mb-0.5 gap-1">
+                  <span className={`text-[11px] font-bold truncate ${isNotice ? 'text-amber-400' : 'text-gold'}`}>
+                    {isNotice ? '📢 공지' : msg.nickname}
                   </span>
-                  <span className="text-[10px] text-gray-500 font-mono">
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  <span className="text-[9px] text-gray-500 font-mono shrink-0">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
-                <p className="text-sm text-gray-100 font-body break-words leading-relaxed">
+                <p className="text-xs text-gray-100 font-body break-words leading-relaxed">
                   {msg.message}
                 </p>
               </motion.div>
@@ -1133,8 +1133,8 @@ function TVLiveChatSidebar() {
       </div>
 
       {/* 응원톡 하단 안내 띠 */}
-      <div className="px-4 py-2.5 bg-slate-950/80 border-t border-slate-800 text-center text-[11px] text-gray-400 font-medium">
-        🎯 스마트폰 화면 하단 채팅창에서 참여 가능
+      <div className="px-3 py-2 bg-slate-950/80 border-t border-slate-800 text-center text-[10px] text-gray-400 font-medium">
+        🎯 스마트폰 하단 채팅창에서 참여 가능
       </div>
     </div>
   )
@@ -1380,8 +1380,8 @@ export default function TVPage() {
     <div className="w-screen h-screen flex flex-row overflow-hidden bg-slate-950 text-white select-none">
       <div className="scanline-overlay pointer-events-none" />
 
-      {/* ① 좌측 2/3 영역 (flex-[2] 또는 w-2/3) - 메인 게임 디스플레이 */}
-      <div className="w-2/3 flex-[2] h-full flex flex-col relative overflow-y-auto overflow-x-hidden bg-navy">
+      {/* ① 좌측 영역 (w-[78%] flex-[78]) - 메인 게임 디스플레이 */}
+      <div className="w-[78%] flex-[78] h-full flex flex-col relative overflow-y-auto overflow-x-hidden bg-navy">
         {/* 로비 페이즈일 때 우측 상단 툴바 (라운드가 없으므로 헤더 대신 배치) */}
         {phase === 'lobby' && (
           <div className="absolute top-5 right-5 z-50 flex items-center gap-3">
@@ -1430,8 +1430,8 @@ export default function TVPage() {
         </div>
       </div>
 
-      {/* ② 우측 1/3 영역 (flex-[1] 또는 w-1/3) - 실시간 응원톡 상시 고정 패널 */}
-      <div className="w-1/3 flex-[1] h-full">
+      {/* ② 우측 영역 (w-[22%] flex-[22]) - 실시간 응원톡 상시 고정 패널 */}
+      <div className="w-[22%] flex-[22] h-full">
         <TVLiveChatSidebar />
       </div>
     </div>
