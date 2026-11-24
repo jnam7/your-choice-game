@@ -18,6 +18,45 @@ import {
   stopAllSounds,
 } from '../utils/sound'
 
+// ===== 관리자 페이지 이동 톱니바퀴 버튼 =====
+function AdminGearButton() {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    window.open('/admin', '_blank', 'noopener,noreferrer')
+  }
+
+  return (
+    <a
+      href="/admin"
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={handleClick}
+      className="p-2.5 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl text-gold/80 hover:text-navy-dark transition-all duration-300 shadow-xl backdrop-blur group opacity-60 hover:opacity-100 flex items-center justify-center cursor-pointer"
+      title="관리자 설정 페이지(/admin)를 새 탭에서 열기"
+    >
+      <svg
+        className="w-5 h-5 transition-transform duration-500 group-hover:rotate-90"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    </a>
+  )
+}
+
 // ===== 전체화면 전환 토글 버튼 =====
 function FullscreenButton() {
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -92,7 +131,7 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
         </div>
       </div>
 
-      {/* 우측 상단 인라인 Flex 컨테이너: [ROUND 표시] ➔ [접속자 수] ➔ [전체화면 버튼] */}
+      {/* 우측 상단 인라인 Flex 컨테이너: [ROUND 표시] ➔ [접속자 수] ➔ [관리자 톱니바퀴] ➔ [전체화면 버튼] */}
       <div className="flex flex-row items-center gap-3">
         {isFinals && (
           <span className="px-3 py-1 bg-orange-600/30 border border-orange-500 rounded-full text-orange-400 font-bold text-xs animate-pulse">
@@ -117,6 +156,9 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
           <span>👥 접속</span>
           <span className="font-mono text-white">{playerList.length}명</span>
         </div>
+
+        {/* 관리자 페이지 바로가기 톱니바퀴 버튼 */}
+        <AdminGearButton />
 
         {/* 전체화면 버튼 */}
         <FullscreenButton />
@@ -1314,6 +1356,7 @@ export default function TVPage() {
             <span>👥 접속</span>
             <span className="font-mono text-white">{playerList.length}명</span>
           </div>
+          <AdminGearButton />
           <FullscreenButton />
         </div>
       )}
