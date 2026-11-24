@@ -328,6 +328,22 @@ export default function AdminPage() {
   }
 
   const [copied, setCopied] = useState(false)
+  const [bgmMasterVolume, setBgmMasterVolume] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('admin_tv_bgm_volume')
+      return saved !== null ? Number(saved) : 0.6
+    }
+    return 0.6
+  })
+
+  // TV BGM 마스터 볼륨 실시간 조절 전송
+  const handleVolumeChange = (vol: number) => {
+    setBgmMasterVolume(vol)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('admin_tv_bgm_volume', String(vol))
+    }
+    socket.emit('admin:set_volume', { volume: vol })
+  }
 
   const handleDownloadQR = () => {
     const canvasId = adminQrTab === 'wifi' ? 'admin-wifi-qr-canvas' : 'admin-lte-qr-canvas'
@@ -515,6 +531,26 @@ export default function AdminPage() {
                         {sec}초
                       </button>
                     ))}
+                  </div>
+
+                  {/* TV 화면 BGM 음량 조절 슬라이더 (0~100%) */}
+                  <div className="flex items-center gap-2 bg-navy px-3 py-1.5 rounded-lg border border-gold/20 text-xs">
+                    <span className="text-gold font-bold flex items-center gap-1 shrink-0">
+                      🔊 TV BGM 음량:
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={bgmMasterVolume}
+                      onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                      className="w-24 h-1.5 bg-gray-700 accent-gold rounded-lg cursor-pointer"
+                      title={`TV BGM 음량: ${Math.round(bgmMasterVolume * 100)}%`}
+                    />
+                    <span className="font-mono text-gold-light w-8 text-right font-bold">
+                      {Math.round(bgmMasterVolume * 100)}%
+                    </span>
                   </div>
                 </div>
               </div>

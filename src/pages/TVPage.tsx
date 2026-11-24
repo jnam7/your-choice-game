@@ -17,124 +17,6 @@ import {
   playGameoverFanfare,
 } from '../utils/sound'
 
-// ===== BGM 배경음악 제어 컴포넌트 =====
-function BgmControl({
-  enabled,
-  volume,
-  onToggle,
-  onVolumeChange,
-}: {
-  enabled: boolean
-  volume: number
-  onToggle: () => void
-  onVolumeChange: (vol: number) => void
-}) {
-  return (
-    <div className="flex items-center gap-2 bg-navy-dark/80 hover:bg-navy-dark border border-gold/30 hover:border-gold rounded-xl px-3 py-1.5 shadow-xl backdrop-blur transition-all duration-300">
-      <button
-        onClick={onToggle}
-        className={`flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer select-none ${
-          enabled ? 'text-gold hover:text-gold-light' : 'text-red-400 hover:text-red-300'
-        }`}
-        title={enabled ? 'BGM 끄기 (음소거)' : 'BGM 켜기'}
-      >
-        {enabled ? (
-          <span className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-gold opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-gold"></span>
-            </span>
-            🎵 BGM ON
-          </span>
-        ) : (
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-2 h-2 rounded-full bg-red-400"></span>
-            🔇 BGM OFF
-          </span>
-        )}
-      </button>
-
-      {/* 볼륨 조절 슬라이더 */}
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.05"
-        value={enabled ? volume : 0}
-        onChange={(e) => {
-          const val = parseFloat(e.target.value)
-          onVolumeChange(val)
-          if (!enabled && val > 0) {
-            onToggle()
-          }
-        }}
-        disabled={!enabled}
-        className="w-16 h-1.5 bg-gray-700 accent-gold rounded-lg cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-        title={`BGM 볼륨: ${Math.round((enabled ? volume : 0) * 100)}%`}
-      />
-      <span className="text-[10px] font-mono text-gray-400 w-7 text-right">
-        {enabled ? `${Math.round(volume * 100)}%` : '0%'}
-      </span>
-    </div>
-  )
-}
-
-// ===== 사운드 음소거 토글 버튼 =====
-function SoundMuteButton({ className = '' }: { className?: string }) {
-  const [muted, setMuted] = useState(() => isSoundMuted())
-
-  const handleToggle = () => {
-    unlockAudioContext()
-    const next = toggleSoundMute()
-    setMuted(next)
-  }
-
-  return (
-    <button
-      onClick={handleToggle}
-      className={`p-2.5 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl transition-all duration-300 shadow-xl backdrop-blur group opacity-60 hover:opacity-100 ${muted ? 'text-red-400 border-red-500/50' : 'text-gold/80 hover:text-navy-dark'
-        } ${className}`}
-      title={muted ? '소리 켜기' : '소리 끄기 (음소거)'}
-    >
-      {muted ? (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-        </svg>
-      ) : (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-        </svg>
-      )}
-    </button>
-  )
-}
-
-// ===== 관리자 페이지 바로가기 버튼 =====
-function AdminShortcutButton() {
-  const handleClick = (e: React.MouseEvent) => {
-    e.preventDefault()
-    window.open('/admin', '_blank', 'noopener,noreferrer')
-  }
-
-  return (
-    <a
-      href="/admin"
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={handleClick}
-      className="p-2.5 sm:px-3 sm:py-2 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl text-gold/80 hover:text-navy-dark transition-all duration-300 shadow-xl backdrop-blur text-xs font-bold flex items-center gap-1.5 opacity-50 hover:opacity-100 group cursor-pointer"
-      title="관리자 페이지(/admin)를 새 탭/새 창에서 열기"
-    >
-      <svg className="w-4 h-4 transition-transform group-hover:rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-      </svg>
-      <span className="hidden sm:inline">관리자</span>
-    </a>
-  )
-}
-
 // ===== 전체화면 전환 토글 버튼 =====
 function FullscreenButton() {
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -184,7 +66,7 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
   const currentMode = customRuleMode || storeRuleMode || 'majority'
 
   return (
-    <header className="flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
+    <header className="relative flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
       <div className="flex items-center gap-4">
         <h1 className="font-display text-2xl md:text-3xl text-gold text-shadow-glow">
           당신의 선택
@@ -194,18 +76,20 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
         </span>
       </div>
 
-      <div className="flex items-center gap-3">
-        {/* 룰 모드 뱃지 */}
-        <div className={`px-4 py-1.5 rounded-full border text-xs md:text-sm font-bold flex items-center gap-2 shadow-lg backdrop-blur ${currentMode === 'minority'
-            ? 'bg-purple-950/70 border-purple-400 text-purple-200 shadow-purple-900/40'
-            : 'bg-gold/15 border-gold/40 text-gold shadow-gold/20'
+      {/* 룰 모드 뱃지: 화면 상단 중앙 정렬 */}
+      <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 hidden sm:flex items-center">
+        <div className={`px-5 py-1.5 rounded-full border text-xs md:text-sm font-bold flex items-center gap-2 shadow-xl backdrop-blur ${currentMode === 'minority'
+            ? 'bg-purple-950/80 border-purple-400 text-purple-200 shadow-purple-900/50'
+            : 'bg-gold/15 border-gold/50 text-gold shadow-gold/25'
           }`}>
-          <span>{currentMode === 'minority' ? '🎯 소수의 선택' : '👥 다수의 선택'}</span>
-          <span className="opacity-80 text-xs hidden sm:inline">
+          <span className="text-sm">{currentMode === 'minority' ? '🎯 소수의 선택' : '👥 다수의 선택'}</span>
+          <span className="opacity-80 text-xs hidden md:inline">
             ({currentMode === 'minority' ? '더 적은 사람이 선택한 쪽 생존' : '더 많은 사람이 선택한 쪽 생존'})
           </span>
         </div>
+      </div>
 
+      <div className="flex items-center gap-3">
         {isFinals && (
           <span className="px-3 py-1 bg-orange-600/30 border border-orange-500 rounded-full text-orange-400 font-bold text-xs animate-pulse">
             ⚡ FINALS
@@ -1149,20 +1033,16 @@ export default function TVPage() {
   const phase = useGameStore((s) => s.phase)
   const timeLeft = useGameStore((s) => s.timeLeft)
   const players = useGameStore((s) => s.players)
+  const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const serverHostUrl = useGameStore((s) => s.serverHostUrl)
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
   const qrMode = useGameStore((s) => s.qrMode)
 
   // BGM 오디오 인스턴스 및 상태 제어
   const bgmRef = useRef<HTMLAudioElement | null>(null)
-  const [bgmEnabled, setBgmEnabled] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('tv_bgm_enabled')
-      return saved !== null ? saved === 'true' : true
-    }
-    return true
-  })
-  const [bgmVolume, setBgmVolume] = useState<number>(() => {
+  const isPlayingRef = useRef<boolean>(false)
+  const [bgmEnabled, setBgmEnabled] = useState<boolean>(true)
+  const [masterVolume, setMasterVolume] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('tv_bgm_volume')
       return saved !== null ? Number(saved) : 0.6
@@ -1170,21 +1050,61 @@ export default function TVPage() {
     return 0.6
   })
 
-  // BGM 오디오 객체 및 페이드인 타이머 참조
+  // BGM 오디오 객체 및 타이머 참조
   const fadeIntervalRef = useRef<any>(null)
   const lastTickSecondRef = useRef<number>(-1)
 
-  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지)
+  // 관리자 소켓 이벤트로 마스터 볼륨 실시간 수신
+  useEffect(() => {
+    const handleVolumeChange = (data: any) => {
+      if (typeof data?.volume === 'number') {
+        const vol = Math.max(0, Math.min(1, data.volume))
+        setMasterVolume(vol)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('tv_bgm_volume', String(vol))
+        }
+      }
+    }
+
+    const handleStateSync = (state: any) => {
+      if (typeof state?.bgmVolume === 'number') {
+        const vol = Math.max(0, Math.min(1, state.bgmVolume))
+        setMasterVolume(vol)
+      }
+    }
+
+    socket.on('game:volume_changed', handleVolumeChange)
+    socket.on('game:state_sync', handleStateSync)
+    socket.on('state:sync', handleStateSync)
+
+    return () => {
+      socket.off('game:volume_changed', handleVolumeChange)
+      socket.off('game:state_sync', handleStateSync)
+      socket.off('state:sync', handleStateSync)
+    }
+  }, [])
+
+  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지 & 중복 play 방지)
   const fadeInBgm = (targetVolume: number) => {
     const audio = bgmRef.current
     if (!audio) return
-    if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
+    if (fadeIntervalRef.current) {
+      clearInterval(fadeIntervalRef.current)
+      fadeIntervalRef.current = null
+    }
+
+    if (!audio.paused && isPlayingRef.current) {
+      // 이미 재생 중이면 볼륨만 목표치로 맞춤
+      audio.volume = targetVolume
+      return
+    }
 
     audio.volume = 0
     const playPromise = audio.play()
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
+          isPlayingRef.current = true
           let currentStep = 0
           const totalSteps = 10
           const stepInterval = 25 // 25ms * 10 = 250ms 페이드인
@@ -1203,12 +1123,13 @@ export default function TVPage() {
           }, stepInterval)
         })
         .catch((err) => {
+          isPlayingRef.current = false
           console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
         })
     }
   }
 
-  // BGM 오디오 객체 초기화
+  // BGM 오디오 객체 단일 인스턴스 초기화
   useEffect(() => {
     const audio = new Audio('/audio/bgm.mp3')
     audio.loop = true
@@ -1227,48 +1148,36 @@ export default function TVPage() {
       if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
       audio.pause()
       audio.currentTime = 0
+      isPlayingRef.current = false
       bgmRef.current = null
     }
   }, [])
 
-  // 볼륨 및 음소거 설정 실시간 동기화
-  useEffect(() => {
-    if (bgmRef.current && !fadeIntervalRef.current) {
-      bgmRef.current.volume = bgmEnabled ? bgmVolume : 0
-    }
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tv_bgm_enabled', String(bgmEnabled))
-      localStorage.setItem('tv_bgm_volume', String(bgmVolume))
-    }
-  }, [bgmEnabled, bgmVolume])
-
-  // 5초 남았을 때 BGM 오디오 더킹 (25%로 감쇠) 및 5, 4, 3, 2, 1 카운트다운 시계음 연동
+  // 3. 남은 시간 5초 이하 시 BGM 볼륨 20~25% 자동 감쇠 (Audio Ducking) 확실한 적용
   useEffect(() => {
     const audio = bgmRef.current
-    const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+    if (!audio || phase !== 'voting') return
 
-    if (phase === 'voting' && timeLeft <= 5 && timeLeft > 0) {
-      // BGM 볼륨 25%로 더킹
-      if (audio && bgmEnabled && !fadeIntervalRef.current) {
-        audio.volume = Math.max(0, Math.min(1, bgmVolume * 0.25))
-      }
+    const baseVolume = masterVolume
 
-      // 5, 4, 3, 2, 1초마다 초침 효과음 1회 재생
+    if (timeLeft <= 5 && timeLeft > 0) {
+      // 5초 이하 구간: 기존 볼륨의 20~25% 수준으로 강제 하향
+      audio.volume = Math.max(0.05, baseVolume * 0.25)
+
+      // 매 초 초침 효과음 1회 재생
       if (lastTickSecondRef.current !== timeLeft) {
         lastTickSecondRef.current = timeLeft
         playCountdownTick(timeLeft <= 3)
       }
-    } else {
-      if (audio && isBgmPhase && bgmEnabled && !fadeIntervalRef.current) {
-        audio.volume = bgmVolume
+    } else if (timeLeft > 5) {
+      if (!fadeIntervalRef.current) {
+        audio.volume = baseVolume
       }
-      if (timeLeft > 5 || phase !== 'voting') {
-        lastTickSecondRef.current = -1
-      }
+      lastTickSecondRef.current = -1
     }
-  }, [phase, timeLeft, bgmEnabled, bgmVolume])
+  }, [timeLeft, phase, masterVolume])
 
-  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지 및 볼륨 리셋 (팝 노이즈 방지 페이드인 적용)
+  // 2. 게임 페이즈(단계)에 따른 BGM 재생 및 완전 정지/초기화 (중복 재생 및 툭툭 씹힘 원천 방지)
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
@@ -1278,20 +1187,27 @@ export default function TVPage() {
 
     if (isBgmPhase) {
       if (bgmEnabled) {
-        audio.currentTime = 0
-        fadeInBgm(bgmVolume)
+        // 이미 재생 중이면 currentTime을 건드리지 않고 그대로 유지
+        if (audio.paused || !isPlayingRef.current) {
+          audio.currentTime = 0
+          fadeInBgm(masterVolume)
+        } else {
+          audio.volume = masterVolume
+        }
       }
     } else {
+      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 즉시 완전 정지
       if (fadeIntervalRef.current) {
         clearInterval(fadeIntervalRef.current)
         fadeIntervalRef.current = null
       }
       audio.pause()
       audio.currentTime = 0
-      audio.volume = bgmEnabled ? bgmVolume : 0
+      audio.volume = masterVolume
+      isPlayingRef.current = false
       lastTickSecondRef.current = -1
     }
-  }, [phase, bgmEnabled, bgmVolume])
+  }, [phase, bgmEnabled, masterVolume])
 
   // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락 및 BGM 활성화
   useEffect(() => {
@@ -1300,8 +1216,8 @@ export default function TVPage() {
       const audio = bgmRef.current
       if (audio) {
         const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-        if (isBgmPhase && audio.paused && bgmEnabled) {
-          audio.play().catch(() => {})
+        if (isBgmPhase && audio.paused && bgmEnabled && !isPlayingRef.current) {
+          fadeInBgm(masterVolume)
         }
       }
     }
@@ -1311,7 +1227,7 @@ export default function TVPage() {
       window.removeEventListener('pointerdown', handleGesture)
       window.removeEventListener('keydown', handleGesture)
     }
-  }, [phase, bgmEnabled])
+  }, [phase, bgmEnabled, masterVolume])
 
   // 서버 정보 및 외부 터널 URL 실시간 연동 (3번 서바이벌 퀴즈 방식)
   useEffect(() => {
@@ -1352,35 +1268,12 @@ export default function TVPage() {
 
   return (
     <div className="min-h-screen bg-navy text-white overflow-hidden relative select-none">
-      {/* 우측 상단 플로팅 툴바 (BGM 제어 + 사운드 음소거 + 관리자 바로가기 + 전체화면 토글) */}
+      {/* 우측 상단 플로팅 툴바 (참가자 수 배지 + 전체화면 토글만 깔끔하게 배치) */}
       <div className="fixed top-5 right-5 z-50 flex items-center gap-2">
-        <BgmControl
-          enabled={bgmEnabled}
-          volume={bgmVolume}
-          onToggle={() => {
-            unlockAudioContext()
-            setBgmEnabled((prev) => {
-              const next = !prev
-              if (bgmRef.current) {
-                bgmRef.current.volume = next ? bgmVolume : 0
-                const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-                if (next && isBgmPhase && bgmRef.current.paused) {
-                  bgmRef.current.play().catch(() => {})
-                }
-              }
-              return next
-            })
-          }}
-          onVolumeChange={(vol) => {
-            unlockAudioContext()
-            setBgmVolume(vol)
-            if (bgmRef.current && bgmEnabled) {
-              bgmRef.current.volume = vol
-            }
-          }}
-        />
-        <SoundMuteButton />
-        <AdminShortcutButton />
+        <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
+          <span>👥 접속</span>
+          <span className="font-mono text-white">{playerList.length}명</span>
+        </div>
         <FullscreenButton />
       </div>
       <TVLiveChatTicker />

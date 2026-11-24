@@ -66,6 +66,7 @@ const gameState = {
   ruleMode: 'majority',
   qrMode: 'wifi',
   serverHostUrl: '',
+  bgmVolume: 0.6,
   currentQuestion: {
     id: 1,
     category: '음식',
@@ -566,6 +567,19 @@ io.on('connection', (socket) => {
   socket.on('admin:action', (data) => {
     io.to(SOCKET_ROOM_MAIN).emit('game:update', data)
     io.emit('game:update', data)
+  })
+
+  // 관리자 TV BGM 마스터 볼륨 설정 (admin:set_volume)
+  socket.on('admin:set_volume', (data) => {
+    try {
+      const vol = typeof data?.volume === 'number' ? Math.max(0, Math.min(1, data.volume)) : 0.6
+      gameState.bgmVolume = vol
+      io.to(SOCKET_ROOM_MAIN).emit('game:volume_changed', { volume: vol })
+      io.emit('game:volume_changed', { volume: vol })
+      console.log(`🔊 [BGM VOLUME] TV Master Volume 설정: ${Math.round(vol * 100)}%`)
+    } catch (e) {
+      console.error('[admin:set_volume Error]', e)
+    }
   })
 
   socket.on('admin:update_server_url', (newUrl) => {
