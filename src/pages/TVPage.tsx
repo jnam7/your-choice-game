@@ -1108,9 +1108,10 @@ export default function TVPage() {
   const [masterVolume, setMasterVolume] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('tv_bgm_volume')
-      return saved !== null ? Number(saved) : 0.6
+      const parsed = saved !== null ? Number(saved) : NaN
+      return !isNaN(parsed) && parsed >= 0 ? parsed : 0.8
     }
-    return 0.6
+    return 0.8
   })
 
   // BGM 오디오 객체 및 타이머 참조
@@ -1147,58 +1148,33 @@ export default function TVPage() {
     }
   }, [])
 
-  // 부드러운 페이드인 헬퍼 함수 (시작 팝 노이즈 방지 & 버퍼 찌꺼기 완벽 차단)
-  const fadeInBgm = (targetVolume: number) => {
+  // 안정적인 BGM 재생 헬퍼 함수
+  const playBgm = (targetVolume?: number) => {
     const audio = bgmRef.current
     if (!audio) return
-    if (fadeIntervalRef.current) {
-      clearInterval(fadeIntervalRef.current)
-      fadeIntervalRef.current = null
-    }
+    const vol = typeof targetVolume === 'number' ? targetVolume : (masterVolume ?? 0.8)
+
+    // 음소거 원천 해제 보장
+    audio.muted = false
+    audio.volume = vol
 
     if (!audio.paused && isPlayingRef.current) {
-      // 이미 재생 중이면 볼륨만 목표치로 맞춤
-      audio.volume = targetVolume
       return
     }
 
-    // 1) 이전 오디오의 버퍼 찌꺼기 튐을 물리적으로 차단하기 위해 먼저 muted = true로 만들고 0초로 설정
-    audio.muted = true
-    audio.volume = 0
     audio.currentTime = 0
-
     const playPromise = audio.play()
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
           isPlayingRef.current = true
-          // 2) 재생이 정상 궤도에 오른 직후인 약 50ms(0.05초) 뒤에 muted 해제 및 페이드인 시작
-          setTimeout(() => {
-            if (!bgmRef.current || !isPlayingRef.current) return
-            bgmRef.current.muted = false
-
-            let currentStep = 0
-            const totalSteps = 10
-            const stepInterval = 25 // 25ms * 10 = 250ms 페이드인
-            fadeIntervalRef.current = setInterval(() => {
-              currentStep++
-              if (!bgmRef.current) {
-                clearInterval(fadeIntervalRef.current)
-                return
-              }
-              const ratio = Math.min(1, currentStep / totalSteps)
-              bgmRef.current.volume = targetVolume * ratio
-              if (currentStep >= totalSteps) {
-                clearInterval(fadeIntervalRef.current)
-                fadeIntervalRef.current = null
-              }
-            }, stepInterval)
-          }, 50)
+          audio.muted = false
+          audio.volume = vol
         })
         .catch((err) => {
           isPlayingRef.current = false
-          if (audio) audio.muted = false
-          console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
+          audio.muted = false
+          console.warn('[TV BGM Autoplay 대기 - 화면 클릭 시 즉시 재생]:', err?.message)
         })
     }
   }
@@ -1207,7 +1183,8 @@ export default function TVPage() {
   useEffect(() => {
     const audio = new Audio('/audio/bgm.mp3')
     audio.loop = true
-    audio.volume = 0
+    audio.muted = false
+    audio.volume = masterVolume ?? 0.8
     bgmRef.current = audio
 
     audio.onerror = () => {
@@ -1227,15 +1204,16 @@ export default function TVPage() {
     }
   }, [])
 
-  // 3. 남은 시간 5초 이하 시 BGM 볼륨 20~25% 자동 감쇠 (Audio Ducking) 확실한 적용
+  // 3. 남은 시간 5초 이하 시 BGM 볼륨 25% 자동 감쇠 (Audio Ducking) 적용
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio || phase !== 'voting') return
 
-    const baseVolume = masterVolume
+    const baseVolume = masterVolume ?? 0.8
+    audio.muted = false
 
     if (timeLeft <= 5 && timeLeft > 0) {
-      // 5초 이하 구간: 기존 볼륨의 20~25% 수준으로 강제 하향
+      // 5초 이하 구간: 기존 볼륨의 25% 수준으로 하향
       audio.volume = Math.max(0.05, baseVolume * 0.25)
 
       // 매 초 초침 효과음 1회 재생
@@ -1244,24 +1222,21 @@ export default function TVPage() {
         playCountdownTick(timeLeft <= 3)
       }
     } else if (timeLeft > 5) {
-      if (!fadeIntervalRef.current) {
-        audio.volume = baseVolume
-      }
+      audio.volume = baseVolume
       lastTickSecondRef.current = -1
     }
   }, [timeLeft, phase, masterVolume])
 
-  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지 및 완전 초기화 (잔향 찌꺼기 완벽 차단)
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
 
+    const baseVolume = masterVolume ?? 0.8
+    audio.muted = false
+
     // 일시정지 상태인 경우 BGM 즉시 일시정지
     if (isPaused) {
-      if (fadeIntervalRef.current) {
-        clearInterval(fadeIntervalRef.current)
-        fadeIntervalRef.current = null
-      }
       audio.pause()
       isPlayingRef.current = false
       return
@@ -1272,25 +1247,19 @@ export default function TVPage() {
 
     if (isBgmPhase) {
       if (bgmEnabled) {
-        // 일시정지 후 재개이거나 처음 재생 시
         if (audio.paused || !isPlayingRef.current) {
-          fadeInBgm(masterVolume)
+          playBgm(baseVolume)
         } else {
-          audio.volume = masterVolume
+          audio.volume = baseVolume
         }
       }
     } else {
-      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 즉시 완전 정지 및 사운드 클린업
-      if (fadeIntervalRef.current) {
-        clearInterval(fadeIntervalRef.current)
-        fadeIntervalRef.current = null
-      }
+      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 정지
       audio.pause()
       audio.currentTime = 0
-      audio.volume = masterVolume
+      audio.volume = baseVolume
       isPlayingRef.current = false
       lastTickSecondRef.current = -1
-      stopAllSounds()
     }
   }, [phase, isPaused, bgmEnabled, masterVolume])
 
@@ -1300,15 +1269,18 @@ export default function TVPage() {
       unlockAudioContext()
       const audio = bgmRef.current
       if (audio) {
+        audio.muted = false
         const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-        if (isBgmPhase && audio.paused && bgmEnabled && !isPlayingRef.current) {
-          fadeInBgm(masterVolume)
+        if (isBgmPhase && bgmEnabled && (audio.paused || !isPlayingRef.current)) {
+          playBgm(masterVolume ?? 0.8)
         }
       }
     }
-    window.addEventListener('pointerdown', handleGesture)
-    window.addEventListener('keydown', handleGesture)
+    window.addEventListener('click', handleGesture, { passive: true })
+    window.addEventListener('pointerdown', handleGesture, { passive: true })
+    window.addEventListener('keydown', handleGesture, { passive: true })
     return () => {
+      window.removeEventListener('click', handleGesture)
       window.removeEventListener('pointerdown', handleGesture)
       window.removeEventListener('keydown', handleGesture)
     }

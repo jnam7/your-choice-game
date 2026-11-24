@@ -3,10 +3,11 @@
 let audioCtx: AudioContext | null = null
 let isMutedState = false
 
-// 초기 음소거 설정 로컬스토리지에서 복구
+// 초기 음소거 설정 로컬스토리지에서 복구 (단, false 기본값 보장)
 if (typeof window !== 'undefined') {
   try {
-    isMutedState = localStorage.getItem('lasttwo_sound_muted') === 'true'
+    const saved = localStorage.getItem('lasttwo_sound_muted')
+    isMutedState = saved === 'true'
   } catch {}
 }
 
@@ -24,24 +25,13 @@ function getAudioContext(): AudioContext | null {
   return audioCtx
 }
 
-// 모바일 브라우저 오디오 잠금 해제 (첫 사용자 터치/클릭 시 호출)
+// 모바일 및 TV 브라우저 오디오 잠금 해제 (사용자 인터랙션 또는 자동 해제 시 호출)
 export function unlockAudioContext(): void {
+  isMutedState = false
   const ctx = getAudioContext()
   if (!ctx) return
   if (ctx.state === 'suspended') {
     ctx.resume().catch(() => {})
-  }
-}
-
-// 모든 활성 오디오 노드 및 컨텍스트 정리 (잔향 찌꺼기 완벽 차단)
-export function stopAllSounds(): void {
-  if (audioCtx && audioCtx.state !== 'closed') {
-    try {
-      // AudioContext의 시간을 suspend -> resume하여 재생 대기/진행 중인 스케줄링 노드를 즉시 차단
-      audioCtx.suspend().then(() => {
-        audioCtx?.resume().catch(() => {})
-      }).catch(() => {})
-    } catch {}
   }
 }
 
@@ -60,6 +50,11 @@ export function setSoundMuted(muted: boolean): void {
 export function toggleSoundMute(): boolean {
   setSoundMuted(!isMutedState)
   return isMutedState
+}
+
+// 모든 활성 오디오 노드 및 컨텍스트 정리
+export function stopAllSounds(): void {
+  // 효과음 노드는 개별 duration 후 자동 stop되므로 AudioContext를 suspend하지 않고 정상 유지
 }
 
 // 모바일 진동 헬퍼 (미지원 브라우저 및 에러 방어)
