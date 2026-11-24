@@ -746,11 +746,14 @@ function TVRevealing() {
 function TVResult() {
   const currentResult = useGameStore((s) => s.currentResult)
   const players = useGameStore((s) => s.players)
+  const isPaused = useGameStore((s) => s.isPaused)
+  const nextRound = useGameStore((s) => s.nextRound)
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const roundNumber = useGameStore((s) => s.roundNumber)
   const [showBars, setShowBars] = useState(false)
   const [showEliminated, setShowEliminated] = useState(false)
 
+  // 1. 결과 연출 타이머 (막대 0.6초, 탈락자 명단 2.5초)
   useEffect(() => {
     const barTimer = setTimeout(() => setShowBars(true), 600)
     const elimTimer = setTimeout(() => setShowEliminated(true), 2500)
@@ -759,6 +762,18 @@ function TVResult() {
       clearTimeout(elimTimer)
     }
   }, [])
+
+  // 2. 결과 화면 5초 노출 보장 후 다음 단계(다음 라운드 또는 최종 우승자) 자동 진행
+  useEffect(() => {
+    if (isPaused) return
+
+    const advanceTimer = setTimeout(() => {
+      // 서버에서 이미 전환되었거나 전환 중일 수 있으므로 nextRound() 호출
+      nextRound()
+    }, 5000)
+
+    return () => clearTimeout(advanceTimer)
+  }, [isPaused, nextRound])
 
   // 투표 결과 막대 그래프 오픈 시 임팩트 효과음
   useEffect(() => {

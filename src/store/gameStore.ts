@@ -695,9 +695,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       let isGameOver = false
       let soleWinnerId: string | null = null
 
-      // 종료 조건 처리 (생존자 판정 강화):
-      // 1) 생존자가 2명 이하인 경우 (1~2명 남음): 즉시 게임 종료 (우승자 탄생)
-      // 2) 생존자가 0명인 경우 (전멸 발생): 다음 라운드로 가지 않고 즉시 게임 종료 (전원 탈락 게임 오버)
+      // 종료 조건 처리 (생존자 판정):
+      // 1) 생존자가 2명 이하인 경우 (1~2명 남음): 우승자 식별 플래그 설정
+      // 2) 생존자가 0명인 경우 (전멸 발생): 우승자 없음 설정
+      // 중요: 생존자가 2명 이하라도 결과 화면('result')을 5초간 온전히 유지한 뒤 nextRound()에서 gameover로 전환함
       if (survivorIds.length <= 2) {
         isGameOver = true
         if (survivorIds.length === 1) {
@@ -721,8 +722,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         soleWinnerId,
       }
 
-      // 생존자가 2명 이하(0~2명)가 되는 순간 다음 라운드로 가지 않고 즉시 게임 종료(gameover)로 전환
-      const nextPhase: GamePhase = isGameOver ? 'gameover' : 'result'
+      // 결과 화면('result')에서 참가자 및 시청자가 5초 동안 득표수와 탈락자를 충분히 확인하도록 phase는 항상 'result'로 유지!
+      const nextPhase: GamePhase = 'result'
 
       // 탈락자 상태 갱신 (기존 상태 보존하며 탈락자만 status = 'eliminated'로 업데이트)
       const updatedPlayers = get().players.map((p) =>
@@ -756,19 +757,22 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     nextRound: () => {
       const { players, timeLimit } = get()
-      const alive = players.filter((p) => p.status === 'alive')
+      const alive = players.filter((p) => p.status === 'alive' || p.isAlive === true)
 
       if (alive.length <= 2) {
+        // 생존자가 2명 이하이거나 0명이면 최종 우승자 / 게임오버 화면으로 전환
+        const soleWinnerId = alive.length === 1 ? alive[0].id : null
         set({
           phase: 'gameover',
           isGameOver: true,
-          soleWinnerId: alive.length === 1 ? alive[0].id : null,
+          soleWinnerId,
         })
         persist()
-        socket.emit('admin:sync', { phase: 'gameover', isGameOver: true, soleWinnerId: alive.length === 1 ? alive[0].id : null })
+        socket.emit('admin:sync', { phase: 'gameover', isGameOver: true, soleWinnerId })
         return
       }
 
+      // 생존자가 3명 이상이면 다음 라운드로 전환
       set((state) => ({
         roundNumber: state.roundNumber + 1,
         votes: {},
@@ -777,10 +781,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       get().showQuestion()
       const nextQ = get().currentQuestion
 
-      // 3번 서바이벌 퀴즈 규격 이벤트 전송
+      // 3번 서바이벌 퀴즈 규격 이벤트 전송 및 투표 시작
       socket.emit('admin:next_round', { timeLimit: timeLimit || 15, question: nextQ })
-
-      // 다음 라운드 진입 시 즉시 15초 투표 자동 시작
       get().startVoting(timeLimit || 15)
     },
 

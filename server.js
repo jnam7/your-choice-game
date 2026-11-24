@@ -272,12 +272,13 @@ function computeAndPublishResult() {
   gameState.currentResult = result
   gameState.isGameOver = isGameOver
   gameState.soleWinnerId = soleWinnerId
-  gameState.phase = isGameOver ? 'gameover' : 'result'
+  // 중요: 생존자가 2명 이하라도 결과 화면(result)을 5초간 온전히 유지하여 시청자와 참가자가 확인하도록 함!
+  gameState.phase = 'result'
 
   console.log(`📢 [SERVER RESULT] 결과 발표: A(${votesA}) vs B(${votesB}), 승리: ${majority}, 남은 생존자: ${survivorIds.length}명`)
   broadcastState()
 
-  // 결과 화면(또는 엔딩 화면) 5초 자동 전환 예약
+  // 결과 화면(result) 5초 자동 전환 예약
   scheduleServerResultTransition()
 }
 
@@ -915,7 +916,7 @@ function getLocalNetworkIp() {
         }
       }
     }
-  } catch {}
+  } catch { }
   return 'localhost'
 }
 
@@ -1248,7 +1249,7 @@ function connectTunnel(targetPort) {
   if (sshProcess) {
     try {
       sshProcess.kill('SIGKILL')
-    } catch {}
+    } catch { }
     sshProcess = null
   }
 
@@ -1287,7 +1288,7 @@ function connectTunnel(targetPort) {
           try {
             io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
             io.emit('server:tunnel_updated', publicTunnelUrl)
-          } catch {}
+          } catch { }
         }
       }
     }
@@ -1332,7 +1333,7 @@ if (!isProduction) {
 
 process.on('SIGINT', () => {
   if (sshProcess) {
-    try { sshProcess.kill() } catch {}
+    try { sshProcess.kill() } catch { }
   }
   process.exit(0)
 })
