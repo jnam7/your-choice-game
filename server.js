@@ -98,8 +98,188 @@ function broadcastState() {
 // =========================================================
 // 서버 주도 상태 전환 관리자 (결과 공개 무한 루프 방지 및 단일 전환 보장)
 // =========================================================
+let votingTimer = null
+let revealingTimer = null
 let resultTransitionTimer = null
 let usedQuestionIdsServer = new Set()
+
+function clearAllTimers() {
+  if (votingTimer) {
+    clearTimeout(votingTimer)
+    votingTimer = null
+  }
+  if (revealingTimer) {
+    clearTimeout(revealingTimer)
+    revealingTimer = null
+  }
+  if (resultTransitionTimer) {
+    clearTimeout(resultTransitionTimer)
+    resultTransitionTimer = null
+  }
+}
+
+// 1. 서버 주도 15초 투표 카운트다운 타이머 시작 (조기 마감 원천 차단: 무조건 15초 유지)
+function startServerVoting(limit = 15) {
+  clearAllTimers()
+  gameState.phase = 'voting'
+  gameState.timeLimit = limit
+  gameState.votingDeadline = Date.now() + limit * 1000
+  gameState.timeLeft = limit
+  gameState.isPaused = false
+  gameState.votes = {}
+
+  console.log(`⏱️ [SERVER VOTING] 서버 주도 15초 투표 시작 (온전한 ${limit}초 보장, 조기 종료 차단)`)
+  broadcastState()
+  io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+    roundNumber: gameState.roundNumber,
+    question: gameState.currentQuestion,
+    timeLimit: limit,
+    votingDeadline: gameState.votingDeadline,
+  })
+
+  // 15초가 지나면 오직 서버에 의해 revealing(3초) 단계로 진입
+  votingTimer = setTimeout(() => {
+    votingTimer = null
+    if (gameState.phase !== 'voting' || gameState.isPaused) return
+
+    console.log(`⏰ [SERVER VOTING] 15초 만료 -> 결과 집계 서스펜스(revealing 3초) 단계 진입`)
+    startServerRevealing()
+  }, limit * 1000)
+}
+
+// 2. 서버 주도 3초 서스펜스 타이머 시작
+function startServerRevealing() {
+  clearAllTimers()
+  gameState.phase = 'revealing'
+  gameState.timeLeft = 3
+  gameState.votingDeadline = null
+  gameState.isPaused = false
+  broadcastState()
+
+  // 3초 후 결과 공개 및 판정 실행
+  revealingTimer = setTimeout(() => {
+    revealingTimer = null
+    if (gameState.phase !== 'revealing' || gameState.isPaused) return
+
+    console.log(`📊 [SERVER REVEALING] 3초 만료 -> 결과 계산 및 발표(result) 단계 진입`)
+    computeAndPublishResult()
+  }, 3000)
+}
+
+// 3. 서버 주도 투표 집계 및 판정
+function computeAndPublishResult() {
+  clearAllTimers()
+  const { votes, players, currentQuestion, roundNumber, ruleMode } = gameState
+
+  const eligiblePlayers = players.filter((p) => {
+    if (p.eliminatedRound && p.eliminatedRound < roundNumber) return false
+    return true
+  })
+  const eligibleIds = new Set(eligiblePlayers.map((p) => p.id))
+
+  const validVotes = {}
+  for (const [pId, choice] of Object.entries(votes || {})) {
+    if (eligibleIds.size === 0 || eligibleIds.has(pId)) {
+      if (choice === 'A' || choice === 'B') {
+        validVotes[pId] = choice
+      }
+    }
+  }
+
+  let votesA = 0
+  let votesB = 0
+  for (const choice of Object.values(validVotes)) {
+    if (choice === 'A') votesA++
+    else if (choice === 'B') votesB++
+  }
+
+  const voterIds = Object.keys(validVotes)
+  const nonVoterIds = eligiblePlayers
+    .filter((p) => !voterIds.includes(p.id))
+    .map((p) => p.id)
+
+  let majority
+  let eliminatedIds = []
+
+  if (ruleMode === 'minority') {
+    if (votesA > 0 && votesB > 0) {
+      if (votesA === votesB) {
+        majority = 'tie'
+        eliminatedIds = [...nonVoterIds]
+      } else if (votesA < votesB) {
+        majority = 'A'
+        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+        eliminatedIds = [...minorityLosers, ...nonVoterIds]
+      } else {
+        majority = 'B'
+        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+        eliminatedIds = [...minorityLosers, ...nonVoterIds]
+      }
+    } else if (votesA > 0 && votesB === 0) {
+      majority = 'A'
+      eliminatedIds = [...nonVoterIds]
+    } else if (votesA === 0 && votesB > 0) {
+      majority = 'B'
+      eliminatedIds = [...nonVoterIds]
+    } else {
+      majority = 'tie'
+      eliminatedIds = [...nonVoterIds]
+    }
+  } else {
+    // 다수의 선택 모드
+    if (votesA === votesB) {
+      majority = 'tie'
+      eliminatedIds = [...nonVoterIds]
+    } else if (votesA > votesB) {
+      majority = 'A'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    } else {
+      majority = 'B'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    }
+  }
+
+  const survivorIds = eligiblePlayers.filter((p) => !eliminatedIds.includes(p.id)).map((p) => p.id)
+  const isGameOver = survivorIds.length <= 2
+  const soleWinnerId = survivorIds.length === 1 ? survivorIds[0] : null
+
+  const result = {
+    questionId: currentQuestion?.id || 1,
+    question: currentQuestion,
+    votesA,
+    votesB,
+    totalVoters: voterIds.length,
+    nonVoters: nonVoterIds.length,
+    majority,
+    ruleMode,
+    eliminated: eliminatedIds,
+    survivors: survivorIds,
+    winnerCount: isGameOver ? survivorIds.length : 0,
+    soleWinnerId,
+  }
+
+  // 플레이어 탈락 상태 갱신
+  for (const p of gameState.players) {
+    if (eliminatedIds.includes(p.id)) {
+      p.status = 'eliminated'
+      p.isAlive = false
+      p.eliminatedRound = roundNumber
+    }
+  }
+
+  gameState.currentResult = result
+  gameState.isGameOver = isGameOver
+  gameState.soleWinnerId = soleWinnerId
+  gameState.phase = isGameOver ? 'gameover' : 'result'
+
+  console.log(`📢 [SERVER RESULT] 결과 발표: A(${votesA}) vs B(${votesB}), 승리: ${majority}, 남은 생존자: ${survivorIds.length}명`)
+  broadcastState()
+
+  // 결과 화면(또는 엔딩 화면) 5초 자동 전환 예약
+  scheduleServerResultTransition()
+}
 
 // 서버 자체 질문 풀 (src/data/questions.ts와 동일한 데이터)
 const serverMajorityQuestions = [
@@ -185,22 +365,11 @@ function scheduleServerResultTransition() {
 
     // 조건 B: 생존자가 3명 이상인 경우 -> 다음 라운드 voting 카운트다운 시작
     gameState.roundNumber += 1
-    gameState.votes = {}
-    gameState.currentResult = null
     gameState.currentQuestion = getNextServerQuestion(gameState.ruleMode)
     const limit = gameState.timeLimit || 15
-    gameState.phase = 'voting'
-    gameState.votingDeadline = Date.now() + limit * 1000
-    gameState.timeLeft = limit
     console.log(`🚀 [SERVER] 다음 라운드(${gameState.roundNumber}) 시작! (제한시간: ${limit}초)`)
 
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
-      roundNumber: gameState.roundNumber,
-      question: gameState.currentQuestion,
-      timeLimit: limit,
-      votingDeadline: gameState.votingDeadline,
-    })
+    startServerVoting(limit)
   }, 5000)
 }
 
@@ -406,6 +575,7 @@ io.on('connection', (socket) => {
   socket.on('admin:start_game', (data, callback) => {
     try {
       console.log('🚀 [3번 서바이벌 퀴즈 규격] admin:start_game 수신 -> 전 기기 동시 라운드 시작!')
+      clearAllTimers()
       gameState.roundNumber = 1
       gameState.votes = {}
       gameState.currentResult = null
@@ -431,23 +601,13 @@ io.on('connection', (socket) => {
       gameState.timeLimit = limit
 
       if (data?.autoStartVoting !== false) {
-        gameState.phase = 'voting'
-        gameState.votingDeadline = Date.now() + limit * 1000
-        gameState.timeLeft = limit
+        startServerVoting(limit)
       } else {
         gameState.phase = 'question'
         gameState.votingDeadline = null
         gameState.timeLeft = limit
+        broadcastState()
       }
-
-      broadcastState()
-
-      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
-        roundNumber: 1,
-        question: gameState.currentQuestion,
-        timeLimit: gameState.timeLimit,
-        votingDeadline: gameState.votingDeadline,
-      })
 
       if (callback) callback({ success: true, phase: gameState.phase })
     } catch (err) {
@@ -456,30 +616,21 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 15초 투표 시작
+  // 15초 투표 시작 (서버 타이머로 통일)
   socket.on('admin:start_voting', (data, callback) => {
     try {
       const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
-      gameState.phase = 'voting'
-      gameState.timeLimit = limit
-      gameState.votingDeadline = Date.now() + limit * 1000
-      gameState.timeLeft = limit
-      gameState.isPaused = false
-      gameState.votes = {}
-      broadcastState()
+      startServerVoting(limit)
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
     }
   })
 
-  // 투표 조기 마감 및 결과 공개 서스펜스 카운트다운
+  // 투표 마감 -> 서버 3초 서스펜스 단계 진입
   socket.on('admin:end_voting', (data, callback) => {
     try {
-      gameState.phase = 'revealing'
-      gameState.timeLeft = 3
-      gameState.isPaused = false
-      broadcastState()
+      startServerRevealing()
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
@@ -489,7 +640,7 @@ io.on('connection', (socket) => {
   // 다음 라운드 진행
   socket.on('admin:next_round', (data, callback) => {
     try {
-      clearResultTransition()
+      clearAllTimers()
       const alive = gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
       if (alive.length <= 2) {
         gameState.phase = 'gameover'
@@ -509,18 +660,7 @@ io.on('connection', (socket) => {
         gameState.currentQuestion = getNextServerQuestion(gameState.ruleMode)
       }
       const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
-      gameState.timeLimit = limit
-      gameState.phase = 'voting'
-      gameState.votingDeadline = Date.now() + limit * 1000
-      gameState.timeLeft = limit
-      broadcastState()
-
-      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
-        roundNumber: gameState.roundNumber,
-        question: gameState.currentQuestion,
-        timeLimit: gameState.timeLimit,
-        votingDeadline: gameState.votingDeadline,
-      })
+      startServerVoting(limit)
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
@@ -529,7 +669,7 @@ io.on('connection', (socket) => {
 
   // 일시정지 및 재개
   const handlePause = () => {
-    clearResultTransition()
+    clearAllTimers()
     gameState.isPaused = true
     if (gameState.phase === 'voting' && gameState.votingDeadline) {
       gameState.timeLeft = Math.max(0, Math.ceil((gameState.votingDeadline - Date.now()) / 1000))
@@ -544,20 +684,22 @@ io.on('connection', (socket) => {
     gameState.isPaused = false
     if (gameState.phase === 'voting' && gameState.timeLeft > 0) {
       gameState.votingDeadline = Date.now() + gameState.timeLeft * 1000
+      startServerVoting(gameState.timeLeft)
+    } else {
+      broadcastState()
+      io.to(SOCKET_ROOM_MAIN).emit('game:resumed', {
+        timeLeft: gameState.timeLeft,
+        votingDeadline: gameState.votingDeadline,
+      })
+      io.emit('game:resumed', {
+        timeLeft: gameState.timeLeft,
+        votingDeadline: gameState.votingDeadline,
+      })
+      if (gameState.phase === 'result') {
+        scheduleServerResultTransition()
+      }
     }
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:resumed', {
-      timeLeft: gameState.timeLeft,
-      votingDeadline: gameState.votingDeadline,
-    })
-    io.emit('game:resumed', {
-      timeLeft: gameState.timeLeft,
-      votingDeadline: gameState.votingDeadline,
-    })
     console.log(`▶️ [GAME RESUMED] 게임 재개됨 (남은 시간: ${gameState.timeLeft}초)`)
-    if (gameState.phase === 'result') {
-      scheduleServerResultTransition()
-    }
   }
 
   socket.on('admin:pause_game', handlePause)
@@ -568,7 +710,7 @@ io.on('connection', (socket) => {
 
   // 관리자 대기실 복귀 및 게임 리셋 (3번 서바이벌 퀴즈 규격)
   socket.on('admin:reset_game', (callback) => {
-    clearResultTransition()
+    clearAllTimers()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null
@@ -589,7 +731,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('admin:reset_game_keep_players', (callback) => {
-    clearResultTransition()
+    clearAllTimers()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null
@@ -610,7 +752,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('admin:move_to_lobby', (callback) => {
-    clearResultTransition()
+    clearAllTimers()
     gameState.phase = 'lobby'
     gameState.roundNumber = 0
     gameState.currentQuestion = null

@@ -588,23 +588,14 @@ function TVVoting() {
       if (votingDeadline) {
         const remaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
         setTimeLeft(remaining)
-        if (remaining <= 0) {
-          endVoting()
-        }
       } else {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            endVoting()
-            return 0
-          }
-          return prev - 1
-        })
+        setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
       }
     }
     tick()
     const timer = setInterval(tick, 250)
     return () => clearInterval(timer)
-  }, [votingDeadline, endVoting, isPaused])
+  }, [votingDeadline, isPaused])
 
   // 투표 마감 5초 전 매초 카운트다운 틱 효과음 (3초 이하는 긴박한 비프음)
   useEffect(() => {

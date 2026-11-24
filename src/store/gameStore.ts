@@ -31,6 +31,9 @@ export function clearDummyVoteTimers() {
   dummyVoteTimers = []
 }
 
+// admin:sync 무한 루프 방지용 마지막 전송 페이로드 캐시
+let lastSyncedPayloadStr = ''
+
 // 로컬스토리지에서 복원
 function loadPersistedState(): Partial<GameState> {
   if (typeof window === 'undefined') return {}
@@ -181,10 +184,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
             isDummy: Boolean(p.isDummy),
           })),
         }
-        socket.emit('admin:sync', syncPayload)
 
-        // 관리자 또는 TV 콘솔인 경우 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
-        if (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv')) {
+        // 결과('result', 'revealing') 화면 등 동일한 상태를 서버와 무한 브로드캐스트 핑퐁하는 현상 방어
+        const payloadKey = JSON.stringify({
+          phase: syncPayload.phase,
+          roundNumber: syncPayload.roundNumber,
+          questionId: syncPayload.currentQuestion?.id,
+          resultId: syncPayload.currentResult?.questionId,
+          voteCount: Object.keys(syncPayload.votes || {}).length,
+          aliveCount: syncPayload.players.filter((p) => p.status === 'alive').length,
+          isPaused: syncPayload.isPaused,
+        })
+
+        if (payloadKey !== lastSyncedPayloadStr) {
+          lastSyncedPayloadStr = payloadKey
+          socket.emit('admin:sync', syncPayload)
+
+          // 관리자 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
           fetch('/api/game/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -236,24 +236,15 @@ export default function AdminPage() {
       if (votingDeadline) {
         const remaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
         setVotingTimeLeft(remaining)
-        if (remaining <= 0) {
-          endVoting()
-        }
       } else {
-        setVotingTimeLeft((prev) => {
-          if (prev <= 1) {
-            endVoting()
-            return 0
-          }
-          return prev - 1
-        })
+        setVotingTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
       }
     }
 
     tick()
     const timer = setInterval(tick, 250)
     return () => clearInterval(timer)
-  }, [phase, isPaused, votingDeadline, endVoting])
+  }, [phase, isPaused, votingDeadline])
 
   // 2. 3초 결과 서스펜스 카운트다운 (Revealing Phase) - 3초 후 결과 공개 (서버에 위임하거나 1회만 호출)
   const [revealingTimeLeft, setRevealingTimeLeft] = useState(3)
