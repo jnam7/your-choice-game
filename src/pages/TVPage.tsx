@@ -752,8 +752,6 @@ function TVResult() {
   const [showBars, setShowBars] = useState(false)
   const [showEliminated, setShowEliminated] = useState(false)
 
-  const hasTriggeredNextRoundRef = useRef(false)
-
   // 1. 결과 연출 타이머 (막대 0.6초, 탈락자 명단 2.5초)
   useEffect(() => {
     const barTimer = setTimeout(() => setShowBars(true), 600)
@@ -764,19 +762,13 @@ function TVResult() {
     }
   }, [])
 
-  // 2. 결과 화면 5초 노출 보장 후 다음 단계(다음 라운드 또는 최종 우승자) 자동 진행 (정확히 단 1회 실행)
+  // 2. 결과 화면 5초 노출 보장 후 다음 단계(다음 라운드 또는 최종 우승자) 자동 진행
   useEffect(() => {
-    if (isPaused) return
-    if (hasTriggeredNextRoundRef.current) return
-
-    const advanceTimer = setTimeout(() => {
-      if (hasTriggeredNextRoundRef.current) return
-      hasTriggeredNextRoundRef.current = true
+    const timer = setTimeout(() => {
       nextRound()
     }, 5000)
-
-    return () => clearTimeout(advanceTimer)
-  }, [isPaused, nextRound])
+    return () => clearTimeout(timer)
+  }, [])
 
   // 투표 결과 막대 그래프 오픈 시 임팩트 효과음
   useEffect(() => {

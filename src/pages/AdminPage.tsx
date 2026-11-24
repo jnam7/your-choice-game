@@ -445,7 +445,7 @@ export default function AdminPage() {
           <div className="lg:col-span-2 space-y-5">
             {/* 통계 지표 카드 */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="총 접속 인원" value={`${playerList.length}/100`} icon="👥" />
+              <StatCard label="총 접속 인원" value={`${playerList.length}/300`} icon="👥" progress={(playerList.length / 300) * 100} />
               <StatCard label="생존자 수" value={alivePlayers.length} icon="💚" color="text-green-400" />
               <StatCard label="탈락자 수" value={eliminatedPlayers.length} icon="💀" color="text-red-400" />
               <StatCard
@@ -1117,7 +1117,7 @@ export default function AdminPage() {
             <div className="glass-card p-5 border border-gold/20 shadow-xl">
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-gold/10">
                 <h3 className="font-display text-base text-gold">
-                  👥 참가자 목록 ({playerList.length}/100)
+                  👥 참가자 목록 ({playerList.length}/300)
                 </h3>
                 <div className="flex gap-2 text-xs font-bold">
                   <span className="text-green-400">생존 {alivePlayers.length}</span>
@@ -1371,17 +1371,29 @@ function StatCard({
   value,
   icon,
   color = 'text-white',
+  progress,
 }: {
   label: string
   value: number | string
   icon: string
   color?: string
+  progress?: number
 }) {
   return (
-    <div className="glass-card-dark p-4 text-center border border-gold/15 shadow">
-      <div className="text-2xl mb-1">{icon}</div>
-      <div className={`font-display text-2xl ${color}`}>{value}</div>
-      <div className="text-gray-400 text-xs font-medium mt-0.5">{label}</div>
+    <div className="glass-card-dark p-4 text-center border border-gold/15 shadow flex flex-col justify-between">
+      <div>
+        <div className="text-2xl mb-1">{icon}</div>
+        <div className={`font-display text-2xl ${color}`}>{value}</div>
+        <div className="text-gray-400 text-xs font-medium mt-0.5">{label}</div>
+      </div>
+      {typeof progress === 'number' && (
+        <div className="w-full bg-slate-800 rounded-full h-1.5 mt-2 overflow-hidden border border-gold/20">
+          <div
+            className="bg-gradient-to-r from-gold-dark to-gold h-full rounded-full transition-all duration-300"
+            style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+          />
+        </div>
+      )}
     </div>
   )
 }
