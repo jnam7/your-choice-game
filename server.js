@@ -9,8 +9,8 @@ import events from 'events'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 
-// 3번 서바이벌 퀴즈 규격: 150인 이상 동시 접속 시 리스너 초과 경고 방지 및 메모리 보호
-events.EventEmitter.defaultMaxListeners = 250
+// 3번 서바이벌 퀴즈 규격: 300인 이상 대규모 동시 접속 시 리스너 초과 경고 방지 및 메모리 보호
+events.EventEmitter.defaultMaxListeners = 500
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -45,13 +45,13 @@ if (fs.existsSync(clientDistPath)) {
 
 const httpServer = http.createServer(app)
 
-// 2. 3번 서바이벌 퀴즈 동일 최적화 Socket.io 설정 (150인 동시 접속 최적화)
+// 2. 3번 서바이벌 퀴즈 동일 최적화 Socket.io 설정 (최대 300인 동시 접속 최적화)
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,
-  maxHttpBufferSize: 2e7,
+  maxHttpBufferSize: 3e7,
   perMessageDeflate: false,
   allowEIO3: true,
 })
@@ -817,7 +817,7 @@ io.on('connection', (socket) => {
         incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
         gameState.players.push(...incoming)
       } else {
-        const count = Math.min(100, Math.max(1, Number(data?.count) || 10))
+        const count = Math.min(300, Math.max(1, Number(data?.count) || 10))
         const existing = gameState.players.length
         const mockNames = [
           '기획팀_김철수', '개발팀_이영희', '디자인_박민수', '마케팅_최지우', '인사팀_정우성',
@@ -828,7 +828,7 @@ io.on('connection', (socket) => {
         const newDummies = []
         for (let i = 0; i < count; i++) {
           const idx = existing + i
-          const nickname = idx < mockNames.length ? mockNames[idx] : `더미참가자_${idx + 1}`
+          const nickname = idx < mockNames.length ? mockNames[idx] : `참가자${idx + 1}`
           newDummies.push({
             id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
             nickname,

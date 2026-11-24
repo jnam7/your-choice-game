@@ -7,6 +7,7 @@ export function LiveChatDrawer() {
   const [isOpen, setIsOpen] = useState(false)
   const [text, setText] = useState('')
   const { chatMessages, sendChatMessage, currentPlayerId } = useGameStore()
+  const safeMessages = Array.isArray(chatMessages) ? chatMessages : []
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -30,7 +31,7 @@ export function LiveChatDrawer() {
     if (isOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [chatMessages, isOpen])
+  }, [safeMessages, isOpen])
 
   return (
     <>
@@ -43,9 +44,9 @@ export function LiveChatDrawer() {
       >
         <span className="text-base">💬</span>
         <span>실시간 응원</span>
-        {chatMessages.length > 0 && (
+        {safeMessages.length > 0 && (
           <span className="px-1.5 py-0.2 bg-navy-dark text-gold text-xs rounded-full font-mono">
-            {chatMessages.length}
+            {safeMessages.length}
           </span>
         )}
       </motion.button>
@@ -101,7 +102,7 @@ export function LiveChatDrawer() {
               {/* 메시지 리스트 */}
               <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 flex flex-col-reverse">
                 <div ref={messagesEndRef} />
-                {chatMessages.map((msg) => {
+                {safeMessages.map((msg) => {
                   const isMe = msg.playerId === currentPlayerId
                   return (
                     <div

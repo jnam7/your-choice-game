@@ -565,23 +565,41 @@ export default function AdminPage() {
                     <p className="text-sm text-gray-300 mb-3">
                       참가자들이 QR 코드로 닉네임을 등록하고 접속할 때까지 대기합니다.
                     </p>
-                    <div className="flex flex-wrap gap-3 items-center">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap gap-2.5 items-center">
+                      <div className="flex items-center gap-1.5">
                         <span className="text-xs text-gray-400">테스트 더미:</span>
                         <input
                           type="number"
                           min={1}
-                          max={100}
+                          max={300}
                           value={mockCount}
                           onChange={(e) => setMockCount(Number(e.target.value))}
-                          className="w-20 px-3 py-1.5 bg-navy border border-gold/30 rounded text-center text-white font-bold text-sm"
+                          className="w-16 px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-center text-white font-bold text-sm"
                         />
                       </div>
                       <button
                         onClick={() => addMockPlayers(mockCount)}
-                        className="px-4 py-1.5 bg-navy border border-gold/40 rounded text-gold hover:bg-gold/10 text-xs font-bold transition-colors"
+                        className="px-3 py-1.5 bg-navy border border-gold/40 rounded text-gold hover:bg-gold/10 text-xs font-bold transition-colors"
                       >
-                        더미 참가자 추가
+                        추가
+                      </button>
+                      <button
+                        onClick={() => addMockPlayers(10)}
+                        className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
+                      >
+                        +10명
+                      </button>
+                      <button
+                        onClick={() => addMockPlayers(50)}
+                        className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
+                      >
+                        +50명
+                      </button>
+                      <button
+                        onClick={() => addMockPlayers(100)}
+                        className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
+                      >
+                        +100명
                       </button>
 
                       <button
@@ -590,7 +608,7 @@ export default function AdminPage() {
                             clearAllPlayers()
                           }
                         }}
-                        className="px-4 py-1.5 bg-red-950/40 border border-red-500/40 rounded text-red-300 hover:bg-red-900/50 text-xs font-bold transition-colors"
+                        className="px-3.5 py-1.5 bg-red-950/40 border border-red-500/40 rounded text-red-300 hover:bg-red-900/50 text-xs font-bold transition-colors ml-auto"
                       >
                         🗑️ 참가자 명단 비우기
                       </button>

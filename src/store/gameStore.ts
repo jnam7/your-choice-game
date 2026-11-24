@@ -48,7 +48,7 @@ function loadPersistedState(): Partial<GameState> {
         try {
           localStorage.removeItem('lasttwo_player_id')
           localStorage.removeItem('lasttwo_player_nickname')
-        } catch {}
+        } catch { }
       }
       return parsed
     }
@@ -205,7 +205,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(syncPayload),
-          }).catch(() => {})
+          }).catch(() => { })
         }
       }
     } catch (e) {
@@ -259,7 +259,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       if (chatChannel) {
         try {
           chatChannel.postMessage({ type: 'NEW_CHAT_MESSAGE', message: newMsg })
-        } catch (e) {}
+        } catch (e) { }
       }
 
       persist()
@@ -281,7 +281,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       if (chatChannel) {
         try {
           chatChannel.postMessage({ type: 'CLEAR_CHAT' })
-        } catch (e) {}
+        } catch (e) { }
       }
       persist()
     },
@@ -393,13 +393,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
             localStorage.setItem('lasttwo_player_id', data.player.id)
           }
         })
-        .catch(() => {})
+        .catch(() => { })
 
       fetch('/api/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, nickname }),
-      }).catch(() => {})
+      }).catch(() => { })
 
       return id
     },
@@ -485,7 +485,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           timeLimit: state.timeLimit || 15,
           question: state.currentQuestion,
         }),
-      }).catch(() => {})
+      }).catch(() => { })
 
       if (autoStartVoting) {
         get().startVoting()
@@ -589,7 +589,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerId, choice }),
-      }).catch(() => {})
+      }).catch(() => { })
 
       set((state) => ({
         votes: { ...state.votes, [playerId]: choice },
@@ -893,7 +893,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           serverHostUrl: state.serverHostUrl,
           chatMessages: state.chatMessages.slice(0, 50),
         }))
-      } catch (e) {}
+      } catch (e) { }
 
       // 서버에 "접속자 유지 리셋" 요청 (소켓 + HTTP)
       socket.emit('admin:reset_game_keep_players')
@@ -901,7 +901,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keepPlayers: true }),
-      }).catch(() => {})
+      }).catch(() => { })
     },
 
     clearAllPlayers: () => {
@@ -913,7 +913,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keepPlayers: false }),
-      }).catch(() => {})
+      }).catch(() => { })
     },
 
     decrementTimer: () => {
@@ -947,7 +947,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           localStorage.removeItem('lasttwo_player_nickname')
           sessionStorage.removeItem('lasttwo_player_id')
           sessionStorage.removeItem('lasttwo_player_nickname')
-        } catch (e) {}
+        } catch (e) { }
       }
       persist()
     },
@@ -1062,7 +1062,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           chatMessages: state.chatMessages.slice(0, 50),
         }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
-      } catch (e) {}
+      } catch (e) { }
     },
   }
 })

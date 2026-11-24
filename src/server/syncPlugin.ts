@@ -394,6 +394,8 @@ export function syncPlugin(): Plugin {
       pingTimeout: 60000,
       pingInterval: 25000,
       connectTimeout: 45000,
+      maxHttpBufferSize: 3e7,
+      perMessageDeflate: false,
       allowEIO3: true,
     })
 
@@ -647,7 +649,7 @@ export function syncPlugin(): Plugin {
             const newDummies: any[] = []
             for (let i = 0; i < count; i++) {
               const idx = existing + i
-              const nickname = idx < mockNames.length ? mockNames[idx] : `더미참가자_${idx + 1}`
+              const nickname = idx < mockNames.length ? mockNames[idx] : `참가자${idx + 1}`
               newDummies.push({
                 id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
                 nickname,

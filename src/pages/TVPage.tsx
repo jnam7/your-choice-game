@@ -419,7 +419,7 @@ function TVLobby() {
           <span className="font-display text-7xl md:text-9xl text-gold text-shadow-glow font-bold">
             {playerList.length}
           </span>
-          <span className="text-gray-400 text-2xl md:text-3xl font-display">/ 100명</span>
+          <span className="text-gray-400 text-2xl md:text-3xl font-display">/ 300명</span>
         </div>
         <p className="text-gold-light/80 text-lg md:text-xl font-medium mt-1">
           {playerList.length > 0 ? '현재 접속 대기 중' : '참가자를 기다리는 중입니다...'}

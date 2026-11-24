@@ -5,6 +5,8 @@ import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
 import { LiveChatDrawer } from '../components/LiveChatDrawer'
+import { safeStorage } from '../utils/safeStorage'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -128,10 +130,8 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       }
 
       // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장 및 로컬 스토어에 추가
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('lasttwo_player_id', localId)
-        localStorage.setItem('lasttwo_player_nickname', trimmed)
-      }
+      safeStorage.setItem('lasttwo_player_id', localId)
+      safeStorage.setItem('lasttwo_player_nickname', trimmed)
 
       useGameStore.getState().setCurrentPlayer(localId)
       useGameStore.getState().addPlayer(trimmed, localId)
@@ -256,8 +256,8 @@ function WaitingRoom({
 
   // 대기실 체류 중 서버에 지속적 하트비트 등록 (관리자/TV에 접속 카운트 100% 누락 방지)
   useEffect(() => {
-    const localId = currentPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
-    const localNick = currentPlayer?.nickname || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null)
+    const localId = currentPlayer?.id || safeStorage.getItem('lasttwo_player_id')
+    const localNick = currentPlayer?.nickname || safeStorage.getItem('lasttwo_player_nickname')
     if (!localId || !localNick) return
 
     const ensureRegistered = () => {
@@ -522,11 +522,13 @@ function QuestionPreviewScreen({ currentPlayer }: { currentPlayer?: Player | nul
 
 // ===== 3. 투표 화면 =====
 function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
-  const { currentQuestion, submitVote, currentPlayerId, votes, isPaused, timeLeft, votingDeadline, timeLimit, roundNumber, ruleMode, phase } = useGameStore()
+  const { currentQuestion, submitVote, currentPlayerId, isPaused, timeLeft, votingDeadline, timeLimit, roundNumber, ruleMode, phase } = useGameStore()
+  const rawVotes = useGameStore((s) => s.votes)
+  const votes = rawVotes && typeof rawVotes === 'object' ? rawVotes : {}
   
   const isEliminated = currentPlayer?.status === 'eliminated'
 
-  const effectiveId = currentPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') || '' : '')
+  const effectiveId = currentPlayer?.id || currentPlayerId || safeStorage.getItem('lasttwo_player_id') || ''
   const myVote = (effectiveId && votes[effectiveId]) as 'A' | 'B' | undefined
   const [selected, setSelected] = useState<'A' | 'B' | null>(myVote || null)
 
@@ -749,8 +751,11 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
 // ===== 결과 화면 =====
 function ResultScreen() {
   const { currentResult, roundResults, currentPlayerId, players, votes, roundNumber } = useGameStore()
-  const result = currentResult || (roundResults.length > 0 ? roundResults[roundResults.length - 1] : null)
-  const currentPlayer = players.find((p) => p.id === currentPlayerId)
+  const safeRoundResults = Array.isArray(roundResults) ? roundResults : []
+  const result = currentResult || (safeRoundResults.length > 0 ? safeRoundResults[safeRoundResults.length - 1] : null)
+  const safePlayers = Array.isArray(players) ? players.filter(Boolean) : []
+  const currentPlayer = safePlayers.find((p) => p && p.id === currentPlayerId)
+  const safeVotes = votes && typeof votes === 'object' ? votes : {}
 
   if (!result) {
     return (
@@ -765,11 +770,13 @@ function ResultScreen() {
     )
   }
 
-  const myVote = (currentPlayerId && votes[currentPlayerId]) as 'A' | 'B' | undefined
-  const totalVotes = result.votesA + result.votesB
-  const pctA = totalVotes > 0 ? Math.round((result.votesA / totalVotes) * 100) : 0
-  const pctB = totalVotes > 0 ? Math.round((result.votesB / totalVotes) * 100) : 0
-  const isSurvivor = currentPlayerId ? result.survivors.includes(currentPlayerId) : false
+  const myVote = (currentPlayerId && safeVotes[currentPlayerId]) as 'A' | 'B' | undefined
+  const votesA = Number(result.votesA) || 0
+  const votesB = Number(result.votesB) || 0
+  const totalVotes = votesA + votesB
+  const pctA = totalVotes > 0 ? Math.round((votesA / totalVotes) * 100) : 0
+  const pctB = totalVotes > 0 ? Math.round((votesB / totalVotes) * 100) : 0
+  const isSurvivor = currentPlayerId && Array.isArray(result.survivors) ? result.survivors.includes(currentPlayerId) : false
 
   // 생존 / 탈락 효과음 및 진동 피드백
   useEffect(() => {
@@ -938,9 +945,11 @@ function ResultScreen() {
 // ===== 탈락 화면 =====
 function EliminatedScreen() {
   const { currentPlayerId, players, roundNumber, currentResult, roundResults, phase } = useGameStore()
-  const currentPlayer = players.find((p) => p.id === currentPlayerId)
-  const alivePlayers = players.filter((p) => p.status === 'alive')
-  const lastResult = currentResult || (roundResults.length > 0 ? roundResults[roundResults.length - 1] : null)
+  const safePlayers = Array.isArray(players) ? players.filter(Boolean) : []
+  const currentPlayer = safePlayers.find((p) => p && p.id === currentPlayerId)
+  const alivePlayers = safePlayers.filter((p) => p && p.status === 'alive')
+  const safeRoundResults = Array.isArray(roundResults) ? roundResults : []
+  const lastResult = currentResult || (safeRoundResults.length > 0 ? safeRoundResults[safeRoundResults.length - 1] : null)
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 max-w-md mx-auto">
@@ -1015,7 +1024,8 @@ function EliminatedScreen() {
 // ===== 우승 화면 =====
 function WinnerScreen() {
   const { players } = useGameStore()
-  const winners = players.filter((p) => p.status === 'alive')
+  const safePlayers = Array.isArray(players) ? players.filter(Boolean) : []
+  const winners = safePlayers.filter((p) => p && p.status === 'alive')
 
   // 우승 축하 팡파르 및 진동
   useEffect(() => {
@@ -1107,14 +1117,14 @@ function WinnerScreen() {
 }
 
 function clearLocalPlayerSession() {
-  if (typeof window === 'undefined') return
   try {
-    localStorage.removeItem('lasttwo_player_id')
-    localStorage.removeItem('lasttwo_player_nickname')
-    localStorage.removeItem('your_choice_game_state')
-    sessionStorage.removeItem('lasttwo_player_id')
-    sessionStorage.removeItem('lasttwo_player_nickname')
-    sessionStorage.clear()
+    safeStorage.removeItem('lasttwo_player_id')
+    safeStorage.removeItem('lasttwo_player_nickname')
+    safeStorage.removeItem('your_choice_game_state')
+    safeStorage.removeItem('lasttwo_game_state_v2')
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.clear()
+    }
   } catch (e) {}
 }
 
@@ -1129,13 +1139,14 @@ export default function PlayerPage() {
   const setCurrentPlayer = useGameStore((s) => s.setCurrentPlayer)
   const clearCurrentPlayer = useGameStore((s) => s.clearCurrentPlayer)
   const removePlayer = useGameStore((s) => s.removePlayer)
-  const players = useGameStore((s) => s.players)
+  const rawPlayers = useGameStore((s) => s.players)
+  const players = Array.isArray(rawPlayers) ? rawPlayers.filter(Boolean) : []
 
   // 게임 진행 중(문제 풀이/투표) 단계 여부: 오직 이 단계에서만 예외적으로 튕김 방지용 복원 허용
   const isPlayPhase = phase === 'question' || phase === 'voting'
 
-  const savedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-  const savedNickname = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+  const savedId = safeStorage.getItem('lasttwo_player_id')
+  const savedNickname = safeStorage.getItem('lasttwo_player_nickname')
 
   // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
   // 대기실(lobby)이거나 게임 진행 중이 아닐 때는 무조건 false 및 로컬 세션 삭제!
@@ -1161,7 +1172,7 @@ export default function PlayerPage() {
   // 대기실(lobby) 상태 감지 시, 아직 참가 확정을 하지 않았다면 남아있는 로컬스토리지 강제 삭제
   useEffect(() => {
     if (phase === 'lobby') {
-      const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+      const sId = safeStorage.getItem('lasttwo_player_id')
       if (sId && !hasConfirmedJoin) {
         clearLocalPlayerSession()
         clearCurrentPlayer()
@@ -1183,7 +1194,7 @@ export default function PlayerPage() {
 
   // 퇴장 처리 함수: 로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
   const handleExitGame = () => {
-    const idToLeave = myPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+    const idToLeave = myPlayer?.id || currentPlayerId || safeStorage.getItem('lasttwo_player_id')
     if (idToLeave) {
       socket.emit('player:leave', { id: idToLeave })
       fetch('/api/game/leave', {
@@ -1209,7 +1220,7 @@ export default function PlayerPage() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (phase === 'lobby') {
-        const id = myPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
+        const id = myPlayer?.id || safeStorage.getItem('lasttwo_player_id')
         if (id) {
           socket.emit('player:leave', { id })
           const blob = new Blob([JSON.stringify({ id })], { type: 'application/json' })
@@ -1223,7 +1234,7 @@ export default function PlayerPage() {
 
   // 게임 세션 유효성 검사 및 리셋 감지
   useEffect(() => {
-    const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
+    const sId = safeStorage.getItem('lasttwo_player_id')
 
     // 1. 대기실(lobby)인 경우: 이전 라운드 투표/탈락 잔여 데이터 리셋
     if (phase === 'lobby') {
@@ -1237,7 +1248,7 @@ export default function PlayerPage() {
     // 서버 players 목록이 이미 로드되었고(players.length > 0), 서버 목록에 내 sId가 전혀 없다면?
     // -> 이전 게임의 유효하지 않은 세션이므로 파기하고 닉네임 입력 화면으로 초기화!
     if (isPlayPhase && sId && players.length > 0) {
-      const isValidPlayer = players.some((p) => p.id === sId)
+      const isValidPlayer = players.some((p) => p && p.id === sId)
       if (!isValidPlayer) {
         console.warn('⚠️ [Session Invalid] 현재 진행 중인 게임 세션에 없는 플레이어 ID입니다. 세션을 파기합니다:', sId)
         clearLocalPlayerSession()
@@ -1266,8 +1277,8 @@ export default function PlayerPage() {
 
   // 1. 게임 진행 중 재접속 시 자동 참가/복원 시도 및 관리자 초기화 수신
   useEffect(() => {
-    const sId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-    const sNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+    const sId = safeStorage.getItem('lasttwo_player_id')
+    const sNick = safeStorage.getItem('lasttwo_player_nickname')
 
     // 오직 실제 문제 풀이/투표 진행 중(isPlayPhase)일 때만 백그라운드 재등록
     if (isPlayPhase && sId && sNick) {
@@ -1305,7 +1316,7 @@ export default function PlayerPage() {
   }, [setCurrentPlayer, clearCurrentPlayer, isPlayPhase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
-  const foundInList = players.find((p) => p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? savedId : null)))
+  const foundInList = players.find((p) => p && p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? savedId : null)))
   const currentPlayer: Player | null =
     foundInList ||
     myPlayer ||
@@ -1321,17 +1332,17 @@ export default function PlayerPage() {
   // 대기실이거나 참가 확정을 하지 않았거나 플레이어 정보가 없으면 무조건 깨끗한 닉네임 입력 화면 강제!
   if (!hasConfirmedJoin || !currentPlayer || (phase === 'lobby' && !hasConfirmedJoin)) {
     return (
-      <NicknameForm
-        onJoin={(p) => {
-          setMyPlayer(p)
-          setCurrentPlayer(p.id)
-          setHasConfirmedJoin(true)
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('lasttwo_player_id', p.id)
-            localStorage.setItem('lasttwo_player_nickname', p.nickname)
-          }
-        }}
-      />
+      <ErrorBoundary>
+        <NicknameForm
+          onJoin={(p) => {
+            setMyPlayer(p)
+            setCurrentPlayer(p.id)
+            setHasConfirmedJoin(true)
+            safeStorage.setItem('lasttwo_player_id', p.id)
+            safeStorage.setItem('lasttwo_player_nickname', p.nickname)
+          }}
+        />
+      </ErrorBoundary>
     )
   }
 
@@ -1397,13 +1408,13 @@ export default function PlayerPage() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <div className="fixed top-3.5 right-3.5 z-40 flex items-center gap-2">
         <AdminShortcutButton />
         <SoundMuteButton />
       </div>
       {renderScreen()}
       <LiveChatDrawer />
-    </>
+    </ErrorBoundary>
   )
 }
