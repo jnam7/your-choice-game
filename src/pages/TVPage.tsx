@@ -1045,45 +1045,69 @@ function TVGameOver() {
         transition={{ type: 'spring', duration: 1.2 }}
         className="text-center z-10 max-w-5xl"
       >
-        <motion.div
-          animate={{ y: [0, -18, 0], rotate: [0, 5, -5, 0] }}
-          transition={{ repeat: Infinity, duration: 2.5, ease: 'easeInOut' }}
-          className="text-9xl md:text-[11rem] mb-4 select-none filter drop-shadow-[0_0_40px_rgba(255,215,0,0.6)]"
-        >
-          🏆
-        </motion.div>
-
-        <h1 className="font-display text-6xl md:text-8xl lg:text-9xl text-gold text-shadow-glow mb-3">
-          {winners.length === 1 ? 'SOLE CHAMPION' : 'THE LAST TWO'}
-        </h1>
-        <p className="font-display text-2xl md:text-4xl text-gold-light tracking-[0.3em] mb-12">
-          {winners.length === 1 ? '단독 최종 우승자 탄생!' : '최후의 생존자 2인 영광의 우승!'}
-        </p>
-
-        {/* 우승자 명단 공개 카드 */}
-        <div className="flex flex-wrap gap-8 md:gap-14 justify-center items-center">
-          {winners.map((winner, i) => (
+        {winners.length === 0 ? (
+          <div>
             <motion.div
-              key={winner.id}
-              initial={{ y: 80, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.6 + i * 0.3, type: 'spring', bounce: 0.5 }}
-              className="glass-card p-8 md:p-12 border-2 border-gold/50 shadow-[0_0_60px_rgba(255,215,0,0.3)] rounded-3xl text-center min-w-[280px] md:min-w-[340px]"
+              animate={{ scale: [1, 1.15, 1] }}
+              transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+              className="text-9xl md:text-[11rem] mb-4 select-none filter drop-shadow-[0_0_40px_rgba(239,68,68,0.6)]"
             >
-              <div className="w-36 h-36 md:w-48 md:h-48 mx-auto mb-6 rounded-full bg-gradient-to-br from-gold via-gold-light to-gold-dark flex items-center justify-center animate-pulse-glow shadow-2xl">
-                <span className="text-6xl md:text-8xl font-display text-navy-dark font-bold">
-                  {winner.nickname.charAt(0)}
-                </span>
-              </div>
-              <h2 className="font-display text-4xl md:text-6xl text-gold text-shadow-glow">
-                {winner.nickname}
-              </h2>
-              <p className="text-gold-light/80 text-xl font-bold mt-3">
-                {winners.length === 1 ? '👑 단독 챔피언' : `🎖️ 최종 생존자 #${i + 1}`}
-              </p>
+              💀
             </motion.div>
-          ))}
-        </div>
+            <h1 className="font-display text-6xl md:text-8xl lg:text-9xl text-red-400 text-shadow-glow mb-4">
+              ALL ELIMINATED
+            </h1>
+            <p className="font-display text-2xl md:text-4xl text-gray-300 tracking-[0.2em] mb-6">
+              모든 생존자가 탈락했습니다! (게임 오버)
+            </p>
+            <p className="text-gray-400 text-lg max-w-lg mx-auto">
+              아쉽게도 최후의 생존자가 남지 않았습니다.<br />
+              관리자 페이지에서 재시작하여 새 게임을 준비해주세요.
+            </p>
+          </div>
+        ) : (
+          <>
+            <motion.div
+              animate={{ y: [0, -18, 0], rotate: [0, 5, -5, 0] }}
+              transition={{ repeat: Infinity, duration: 2.5, ease: 'easeInOut' }}
+              className="text-9xl md:text-[11rem] mb-4 select-none filter drop-shadow-[0_0_40px_rgba(255,215,0,0.6)]"
+            >
+              🏆
+            </motion.div>
+
+            <h1 className="font-display text-6xl md:text-8xl lg:text-9xl text-gold text-shadow-glow mb-3">
+              {winners.length === 1 ? 'SOLE CHAMPION' : 'THE LAST TWO'}
+            </h1>
+            <p className="font-display text-2xl md:text-4xl text-gold-light tracking-[0.3em] mb-12">
+              {winners.length === 1 ? '단독 최종 우승자 탄생!' : '최후의 생존자 2인 영광의 우승!'}
+            </p>
+
+            {/* 우승자 명단 공개 카드 */}
+            <div className="flex flex-wrap gap-8 md:gap-14 justify-center items-center">
+              {winners.map((winner, i) => (
+                <motion.div
+                  key={winner.id}
+                  initial={{ y: 80, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.6 + i * 0.3, type: 'spring', bounce: 0.5 }}
+                  className="glass-card p-8 md:p-12 border-2 border-gold/50 shadow-[0_0_60px_rgba(255,215,0,0.3)] rounded-3xl text-center min-w-[280px] md:min-w-[340px]"
+                >
+                  <div className="w-36 h-36 md:w-48 md:h-48 mx-auto mb-6 rounded-full bg-gradient-to-br from-gold via-gold-light to-gold-dark flex items-center justify-center animate-pulse-glow shadow-2xl">
+                    <span className="text-6xl md:text-8xl font-display text-navy-dark font-bold">
+                      {winner.nickname.charAt(0)}
+                    </span>
+                  </div>
+                  <h2 className="font-display text-4xl md:text-6xl text-gold text-shadow-glow">
+                    {winner.nickname}
+                  </h2>
+                  <p className="text-gold-light/80 text-xl font-bold mt-3">
+                    {winners.length === 1 ? '👑 단독 챔피언' : `🎖️ 최종 생존자 #${i + 1}`}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )}
       </motion.div>
 
       {/* 하단 서명 */}
@@ -1123,6 +1147,7 @@ export default function TVPage() {
   useSocketSync()
 
   const phase = useGameStore((s) => s.phase)
+  const timeLeft = useGameStore((s) => s.timeLeft)
   const players = useGameStore((s) => s.players)
   const serverHostUrl = useGameStore((s) => s.serverHostUrl)
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
@@ -1178,7 +1203,22 @@ export default function TVPage() {
     }
   }, [bgmEnabled, bgmVolume])
 
-  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지
+  // 5초 남았을 때 BGM 오디오 더킹 (Audio Ducking: 기존 대비 약 30% 수준으로 부드럽게 감쇠)
+  useEffect(() => {
+    const audio = bgmRef.current
+    if (!audio) return
+
+    const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+    if (!isBgmPhase || !bgmEnabled) return
+
+    // 카운트다운 타이머가 5초 이하로 떨어져 시간 임박 경고 효과음(Tick-Tock) 출력 시 BGM 볼륨 30%로 감쇠
+    const isDucking = phase === 'voting' && timeLeft <= 5 && timeLeft > 0
+    const targetVol = isDucking ? bgmVolume * 0.3 : bgmVolume
+
+    audio.volume = Math.max(0, Math.min(1, targetVol))
+  }, [phase, timeLeft, bgmEnabled, bgmVolume])
+
+  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지 및 볼륨 리셋
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
@@ -1198,6 +1238,8 @@ export default function TVPage() {
     } else {
       audio.pause()
       audio.currentTime = 0
+      // 단계 전환 또는 시간 종료 시 기본 볼륨으로 초기화
+      audio.volume = bgmEnabled ? bgmVolume : 0
     }
   }, [phase, bgmEnabled, bgmVolume])
 

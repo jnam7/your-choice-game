@@ -960,15 +960,23 @@ function EliminatedScreen() {
           {currentPlayer?.nickname}님은 Round {currentPlayer?.eliminatedRound || roundNumber}에서 탈락하셨습니다
         </p>
 
-        {phase === 'gameover' && alivePlayers.length > 0 && (
+        {phase === 'gameover' && (
           <div className="glass-card p-4 border border-gold/50 bg-gradient-to-br from-gold/15 to-transparent text-center shadow-lg">
-            <span className="text-xs text-gold font-bold block mb-1">👑 최종 우승 발표</span>
+            <span className="text-xs text-gold font-bold block mb-1">
+              {alivePlayers.length === 0 ? '💀 경기 종료' : '👑 최종 우승 발표'}
+            </span>
             <div className="text-xl font-display text-white font-extrabold">
-              {alivePlayers.length === 1
+              {alivePlayers.length === 0
+                ? '모든 생존자 탈락'
+                : alivePlayers.length === 1
                 ? `단독 우승자: ${alivePlayers[0].nickname}`
                 : `최후의 2인: ${alivePlayers.map((p) => p.nickname).join(', ')}`}
             </div>
-            <p className="text-xs text-gray-300 mt-1">모든 라운드가 종료되었습니다! 축하합니다!</p>
+            <p className="text-xs text-gray-300 mt-1">
+              {alivePlayers.length === 0
+                ? '남아있는 생존자가 없어 게임이 종료되었습니다.'
+                : '모든 라운드가 종료되었습니다! 축하합니다!'}
+            </p>
           </div>
         )}
 
@@ -1035,41 +1043,57 @@ function WinnerScreen() {
         transition={{ type: 'spring', duration: 1 }}
         className="text-center z-10"
       >
-        <motion.div
-          animate={{ rotate: [0, -5, 5, -5, 0] }}
-          transition={{ repeat: Infinity, duration: 2 }}
-          className="text-8xl mb-6"
-        >
-          🏆
-        </motion.div>
-
-        <h1 className="font-display text-4xl md:text-5xl text-gold text-shadow-glow mb-4">
-          {winners.length === 1 ? '단독 우승을 축하합니다!' : '축하합니다!'}
-        </h1>
-
-        <div className="font-display text-2xl text-white mb-8">
-          {winners.length === 1 ? '👑 단독 챔피언 탄생' : 'THE LAST TWO'}
-        </div>
-
-        <div className="flex gap-6 justify-center">
-          {winners.map((winner) => (
+        {winners.length === 0 ? (
+          <div>
+            <div className="text-7xl mb-4 select-none">💀</div>
+            <h1 className="font-display text-4xl text-red-400 text-shadow-glow mb-2">
+              GAME OVER
+            </h1>
+            <div className="font-display text-xl text-gray-300 mb-4">
+              모든 참가자가 탈락했습니다
+            </div>
+            <p className="text-gray-400 text-sm">
+              최후의 생존자가 남지 않아 게임이 종료되었습니다.
+            </p>
+          </div>
+        ) : (
+          <>
             <motion.div
-              key={winner.id}
-              initial={{ y: 50, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.5, type: 'spring' }}
-              className="glass-card p-6 animate-pulse-glow"
+              animate={{ rotate: [0, -5, 5, -5, 0] }}
+              transition={{ repeat: Infinity, duration: 2 }}
+              className="text-8xl mb-6"
             >
-              <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gradient-to-br from-gold to-gold-dark
-                              flex items-center justify-center">
-                <span className="text-2xl font-display text-navy-dark">
-                  {winner.nickname.charAt(0)}
-                </span>
-              </div>
-              <p className="font-display text-xl text-gold">{winner.nickname}</p>
+              🏆
             </motion.div>
-          ))}
-        </div>
+
+            <h1 className="font-display text-4xl md:text-5xl text-gold text-shadow-glow mb-4">
+              {winners.length === 1 ? '단독 우승을 축하합니다!' : '축하합니다!'}
+            </h1>
+
+            <div className="font-display text-2xl text-white mb-8">
+              {winners.length === 1 ? '👑 단독 챔피언 탄생' : 'THE LAST TWO (최후의 2인)'}
+            </div>
+
+            <div className="flex gap-6 justify-center">
+              {winners.map((winner) => (
+                <motion.div
+                  key={winner.id}
+                  initial={{ y: 50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.5, type: 'spring' }}
+                  className="glass-card p-6 animate-pulse-glow"
+                >
+                  <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gradient-to-br from-gold to-gold-dark flex items-center justify-center">
+                    <span className="text-2xl font-display text-navy-dark">
+                      {winner.nickname.charAt(0)}
+                    </span>
+                  </div>
+                  <p className="font-display text-xl text-gold">{winner.nickname}</p>
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )}
       </motion.div>
     </div>
   )

@@ -368,6 +368,16 @@ io.on('connection', (socket) => {
   // 다음 라운드 진행
   socket.on('admin:next_round', (data, callback) => {
     try {
+      const alive = gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
+      if (alive.length <= 2) {
+        gameState.phase = 'gameover'
+        gameState.isGameOver = true
+        gameState.soleWinnerId = alive.length === 1 ? alive[0].id : null
+        broadcastState()
+        if (callback) callback({ success: false, reason: '생존자가 2명 이하이므로 게임이 종료되었습니다.' })
+        return
+      }
+
       gameState.roundNumber += 1
       gameState.votes = {}
       gameState.currentResult = null

@@ -579,7 +579,7 @@ export default function AdminPage() {
                                  font-display text-xl md:text-2xl rounded-xl disabled:opacity-40 disabled:cursor-not-allowed
                                  hover:shadow-lg hover:shadow-gold/30 transition-all font-bold"
                     >
-                      🚀 1라운드 시작 & 자동 진행 (15초 투표)
+                      🚀 게임시작
                     </button>
                     <button
                       onClick={() => {
@@ -789,8 +789,18 @@ export default function AdminPage() {
               {/* 6. 게임 종료 페이즈 (GAMEOVER) */}
               {phase === 'gameover' && (
                 <div className="text-center py-6 space-y-4">
-                  <div className="text-7xl animate-bounce">🏆</div>
-                  {alivePlayers.length === 1 ? (
+                  <div className="text-7xl animate-bounce">
+                    {alivePlayers.length === 0 ? '💀' : '🏆'}
+                  </div>
+                  {alivePlayers.length === 0 ? (
+                    <div>
+                      <span className="px-3 py-1 bg-red-900/60 text-red-300 border border-red-500/40 rounded-full text-xs font-bold">
+                        전원 탈락
+                      </span>
+                      <h3 className="font-display text-3xl text-red-400 mt-2">모든 생존자 탈락 (GAME OVER)</h3>
+                      <p className="text-gray-400 text-sm">남아있는 생존자가 없어 게임이 종료되었습니다.</p>
+                    </div>
+                  ) : alivePlayers.length === 1 ? (
                     <div>
                       <span className="px-3 py-1 bg-gold/20 text-gold border border-gold/40 rounded-full text-xs font-bold">
                         단독 우승 예외 처리
@@ -801,21 +811,23 @@ export default function AdminPage() {
                   ) : (
                     <div>
                       <h3 className="font-display text-4xl text-gold">THE LAST TWO</h3>
-                      <p className="text-gray-300 text-sm mt-1">최후의 2인이 결정되었습니다!</p>
+                      <p className="text-gray-300 text-sm mt-1">최후의 2인 우승자가 결정되었습니다!</p>
                     </div>
                   )}
 
-                  <div className="flex gap-4 justify-center my-4">
-                    {alivePlayers.map((p) => (
-                      <div key={p.id} className="glass-card p-5 border border-gold/40 animate-pulse-glow shadow-xl">
-                        <div className="w-14 h-14 mx-auto rounded-full bg-gold text-navy-dark flex items-center justify-center font-display text-2xl mb-2">
-                          {p.nickname.charAt(0)}
+                  {alivePlayers.length > 0 && (
+                    <div className="flex gap-4 justify-center my-4">
+                      {alivePlayers.map((p) => (
+                        <div key={p.id} className="glass-card p-5 border border-gold/40 animate-pulse-glow shadow-xl">
+                          <div className="w-14 h-14 mx-auto rounded-full bg-gold text-navy-dark flex items-center justify-center font-display text-2xl mb-2">
+                            {p.nickname.charAt(0)}
+                          </div>
+                          <p className="font-display text-xl text-gold">{p.nickname}</p>
+                          <p className="text-xs text-gray-400 mt-1">최종 우승자</p>
                         </div>
-                        <p className="font-display text-xl text-gold">{p.nickname}</p>
-                        <p className="text-xs text-gray-400 mt-1">최종 우승자</p>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="flex gap-3 pt-3">
                     <button

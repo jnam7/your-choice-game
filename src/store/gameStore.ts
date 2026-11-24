@@ -661,16 +661,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         .filter((p) => !eliminatedIds.includes(p.id))
         .map((p) => p.id)
 
-      // 예외 처리: 모든 생존자가 동시에 탈락하여 생존자가 0명이 된 경우, 직전 라운드 생존자 전원 부활 재도전
-      if (survivorIds.length === 0 && alivePlayers.length > 0) {
-        survivorIds = alivePlayers.map((p) => p.id)
-        eliminatedIds = []
-      }
-
       let isGameOver = false
       let soleWinnerId: string | null = null
 
-      if (survivorIds.length <= 2 && survivorIds.length > 0) {
+      // 종료 조건 처리 (생존자 판정 강화):
+      // 1) 생존자가 2명 이하인 경우 (1~2명 남음): 즉시 게임 종료 (우승자 탄생)
+      // 2) 생존자가 0명인 경우 (전멸 발생): 다음 라운드로 가지 않고 즉시 게임 종료 (전원 탈락 게임 오버)
+      if (survivorIds.length <= 2) {
         isGameOver = true
         if (survivorIds.length === 1) {
           soleWinnerId = survivorIds[0]
@@ -692,15 +689,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         soleWinnerId,
       }
 
-      // 생존자가 2명 이하가 되는 순간 즉시 게임 종료(gameover)로 전환
+      // 생존자가 2명 이하(0~2명)가 되는 순간 다음 라운드로 가지 않고 즉시 게임 종료(gameover)로 전환
       const nextPhase: GamePhase = isGameOver ? 'gameover' : 'result'
 
+      const updatedPlayers = get().players.map((p) =>
+        eliminatedIds.includes(p.id)
+          ? { ...p, status: 'eliminated' as const, eliminatedRound: roundNumber }
+          : p
+      )
+
       set((state) => ({
-        players: state.players.map((p) =>
-          eliminatedIds.includes(p.id)
-            ? { ...p, status: 'eliminated' as const, eliminatedRound: roundNumber }
-            : p
-        ),
+        players: updatedPlayers,
         currentResult: result,
         roundResults: [...state.roundResults, result],
         usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
@@ -709,6 +708,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         soleWinnerId,
       }))
       persist()
+
+      if (isGameOver) {
+        socket.emit('admin:sync', {
+          phase: 'gameover',
+          isGameOver: true,
+          soleWinnerId,
+          currentResult: result,
+          players: updatedPlayers,
+        })
+      }
     },
 
     nextRound: () => {
