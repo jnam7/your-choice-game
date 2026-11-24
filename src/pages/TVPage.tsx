@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
@@ -16,6 +16,68 @@ import {
   playResultReveal,
   playGameoverFanfare,
 } from '../utils/sound'
+
+// ===== BGM 배경음악 제어 컴포넌트 =====
+function BgmControl({
+  enabled,
+  volume,
+  onToggle,
+  onVolumeChange,
+}: {
+  enabled: boolean
+  volume: number
+  onToggle: () => void
+  onVolumeChange: (vol: number) => void
+}) {
+  return (
+    <div className="flex items-center gap-2 bg-navy-dark/80 hover:bg-navy-dark border border-gold/30 hover:border-gold rounded-xl px-3 py-1.5 shadow-xl backdrop-blur transition-all duration-300">
+      <button
+        onClick={onToggle}
+        className={`flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer select-none ${
+          enabled ? 'text-gold hover:text-gold-light' : 'text-red-400 hover:text-red-300'
+        }`}
+        title={enabled ? 'BGM 끄기 (음소거)' : 'BGM 켜기'}
+      >
+        {enabled ? (
+          <span className="flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-gold opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-gold"></span>
+            </span>
+            🎵 BGM ON
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-400"></span>
+            🔇 BGM OFF
+          </span>
+        )}
+      </button>
+
+      {/* 볼륨 조절 슬라이더 */}
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.05"
+        value={enabled ? volume : 0}
+        onChange={(e) => {
+          const val = parseFloat(e.target.value)
+          onVolumeChange(val)
+          if (!enabled && val > 0) {
+            onToggle()
+          }
+        }}
+        disabled={!enabled}
+        className="w-16 h-1.5 bg-gray-700 accent-gold rounded-lg cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+        title={`BGM 볼륨: ${Math.round((enabled ? volume : 0) * 100)}%`}
+      />
+      <span className="text-[10px] font-mono text-gray-400 w-7 text-right">
+        {enabled ? `${Math.round(volume * 100)}%` : '0%'}
+      </span>
+    </div>
+  )
+}
 
 // ===== 사운드 음소거 토글 버튼 =====
 function SoundMuteButton({ className = '' }: { className?: string }) {
@@ -1066,20 +1128,98 @@ export default function TVPage() {
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
   const qrMode = useGameStore((s) => s.qrMode)
 
-  // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락
+  // BGM 오디오 인스턴스 및 상태 제어
+  const bgmRef = useRef<HTMLAudioElement | null>(null)
+  const [bgmEnabled, setBgmEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tv_bgm_enabled')
+      return saved !== null ? saved === 'true' : true
+    }
+    return true
+  })
+  const [bgmVolume, setBgmVolume] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tv_bgm_volume')
+      return saved !== null ? Number(saved) : 0.6
+    }
+    return 0.6
+  })
+
+  // BGM 오디오 객체 초기화
+  useEffect(() => {
+    const audio = new Audio('/audio/bgm.mp3')
+    audio.loop = true
+    audio.volume = bgmEnabled ? bgmVolume : 0
+    bgmRef.current = audio
+
+    audio.onerror = () => {
+      // /audio/bgm.mp3 실패 시 /bgm.mp3로 fallback
+      if (audio.src.includes('/audio/bgm.mp3')) {
+        audio.src = '/bgm.mp3'
+        audio.load()
+      }
+    }
+
+    return () => {
+      audio.pause()
+      audio.currentTime = 0
+      bgmRef.current = null
+    }
+  }, [])
+
+  // 볼륨 및 음소거 설정 실시간 동기화
+  useEffect(() => {
+    if (bgmRef.current) {
+      bgmRef.current.volume = bgmEnabled ? bgmVolume : 0
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tv_bgm_enabled', String(bgmEnabled))
+      localStorage.setItem('tv_bgm_volume', String(bgmVolume))
+    }
+  }, [bgmEnabled, bgmVolume])
+
+  // 게임 페이즈(단계)에 따른 BGM 자동 재생 / 즉시 정지
+  useEffect(() => {
+    const audio = bgmRef.current
+    if (!audio) return
+
+    // 투표/질문 단계 (voting, question, playing)
+    const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+
+    if (isBgmPhase) {
+      audio.currentTime = 0
+      audio.volume = bgmEnabled ? bgmVolume : 0
+      const playPromise = audio.play()
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn('[TV BGM 자동재생 대기 - 화면 클릭 시 재생됨]:', err.message)
+        })
+      }
+    } else {
+      audio.pause()
+      audio.currentTime = 0
+    }
+  }, [phase, bgmEnabled, bgmVolume])
+
+  // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락 및 BGM 활성화
   useEffect(() => {
     const handleGesture = () => {
       unlockAudioContext()
-      window.removeEventListener('pointerdown', handleGesture)
-      window.removeEventListener('keydown', handleGesture)
+      const audio = bgmRef.current
+      if (audio) {
+        const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+        if (isBgmPhase && audio.paused && bgmEnabled) {
+          audio.play().catch(() => {})
+        }
+      }
     }
-    window.addEventListener('pointerdown', handleGesture, { once: true })
-    window.addEventListener('keydown', handleGesture, { once: true })
+    window.addEventListener('pointerdown', handleGesture)
+    window.addEventListener('keydown', handleGesture)
     return () => {
       window.removeEventListener('pointerdown', handleGesture)
       window.removeEventListener('keydown', handleGesture)
     }
-  }, [])
+  }, [phase, bgmEnabled])
 
   // 서버 정보 및 외부 터널 URL 실시간 연동 (3번 서바이벌 퀴즈 방식)
   useEffect(() => {
@@ -1120,8 +1260,33 @@ export default function TVPage() {
 
   return (
     <div className="min-h-screen bg-navy text-white overflow-hidden relative select-none">
-      {/* 우측 상단 플로팅 툴바 (사운드 음소거 + 관리자 바로가기 + 전체화면 토글) */}
+      {/* 우측 상단 플로팅 툴바 (BGM 제어 + 사운드 음소거 + 관리자 바로가기 + 전체화면 토글) */}
       <div className="fixed top-5 right-5 z-50 flex items-center gap-2">
+        <BgmControl
+          enabled={bgmEnabled}
+          volume={bgmVolume}
+          onToggle={() => {
+            unlockAudioContext()
+            setBgmEnabled((prev) => {
+              const next = !prev
+              if (bgmRef.current) {
+                bgmRef.current.volume = next ? bgmVolume : 0
+                const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+                if (next && isBgmPhase && bgmRef.current.paused) {
+                  bgmRef.current.play().catch(() => {})
+                }
+              }
+              return next
+            })
+          }}
+          onVolumeChange={(vol) => {
+            unlockAudioContext()
+            setBgmVolume(vol)
+            if (bgmRef.current && bgmEnabled) {
+              bgmRef.current.volume = vol
+            }
+          }}
+        />
         <SoundMuteButton />
         <AdminShortcutButton />
         <FullscreenButton />
