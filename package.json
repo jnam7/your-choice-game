@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start": "node server.mjs"
+    "start": "node server.js"
   },
   "dependencies": {
     "@types/cors": "^2.8.19",
