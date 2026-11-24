@@ -2,12 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
-import { ref, onValue, off } from 'firebase/database'
 import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
-import { useFirebaseSync } from '../hooks/useFirebaseSync'
-import { rtdb, RTDB_PATHS } from '../firebase'
+import { useSocketSync } from '../hooks/useSocketSync'
 import type { Player } from '../types/game'
 import {
   unlockAudioContext,
@@ -32,9 +30,8 @@ function SoundMuteButton({ className = '' }: { className?: string }) {
   return (
     <button
       onClick={handleToggle}
-      className={`p-2.5 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl transition-all duration-300 shadow-xl backdrop-blur group opacity-60 hover:opacity-100 ${
-        muted ? 'text-red-400 border-red-500/50' : 'text-gold/80 hover:text-navy-dark'
-      } ${className}`}
+      className={`p-2.5 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl transition-all duration-300 shadow-xl backdrop-blur group opacity-60 hover:opacity-100 ${muted ? 'text-red-400 border-red-500/50' : 'text-gold/80 hover:text-navy-dark'
+        } ${className}`}
       title={muted ? '소리 켜기' : '소리 끄기 (음소거)'}
     >
       {muted ? (
@@ -137,11 +134,10 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
 
       <div className="flex items-center gap-3">
         {/* 룰 모드 뱃지 */}
-        <div className={`px-4 py-1.5 rounded-full border text-xs md:text-sm font-bold flex items-center gap-2 shadow-lg backdrop-blur ${
-          currentMode === 'minority'
+        <div className={`px-4 py-1.5 rounded-full border text-xs md:text-sm font-bold flex items-center gap-2 shadow-lg backdrop-blur ${currentMode === 'minority'
             ? 'bg-purple-950/70 border-purple-400 text-purple-200 shadow-purple-900/40'
             : 'bg-gold/15 border-gold/40 text-gold shadow-gold/20'
-        }`}>
+          }`}>
           <span>{currentMode === 'minority' ? '🎯 소수의 선택' : '👥 다수의 선택'}</span>
           <span className="opacity-80 text-xs hidden sm:inline">
             ({currentMode === 'minority' ? '더 적은 사람이 선택한 쪽 생존' : '더 많은 사람이 선택한 쪽 생존'})
@@ -184,22 +180,6 @@ function TVLobby() {
 
   // TV 로비 참가자 실시간 카운트/목록 이벤트 직결 수신
   useEffect(() => {
-    // Firebase RTDB players 실시간 리스너 직결 (games/your-choice/players)
-    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
-    const unsubPlayers = onValue(
-      playersRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        const list: Player[] = Array.isArray(val)
-          ? val.filter(Boolean)
-          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
-        useGameStore.getState().syncWithServer({ players: list })
-      },
-      (err) => {
-        console.error('❌ [TVLobby] Firebase players onValue error:', err)
-      }
-    )
-
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
       let list: any[] = []
@@ -228,7 +208,6 @@ function TVLobby() {
     socket.on('game:qr_mode_changed', handleQrModeChanged)
 
     return () => {
-      off(playersRef, 'value', unsubPlayers)
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
@@ -275,7 +254,7 @@ function TVLobby() {
           setTunnelUrl(info.publicUrl)
         }
       })
-      .catch(() => {})
+      .catch(() => { })
 
     const handleTunnelUpdated = (newUrl: string) => {
       if (newUrl && isExternalUrl(newUrl)) {
@@ -327,22 +306,20 @@ function TVLobby() {
       >
         <button
           onClick={() => handleSelectTab('wifi')}
-          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${
-            activeTab === 'wifi'
+          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${activeTab === 'wifi'
               ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 text-white shadow-lg shadow-emerald-500/30 scale-102 font-extrabold'
               : 'text-gray-300 hover:text-white hover:bg-white/5'
-          }`}
+            }`}
         >
           <span>📶 같은 Wi-Fi 접속</span>
         </button>
 
         <button
           onClick={() => handleSelectTab('tunnel')}
-          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${
-            activeTab === 'tunnel'
+          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${activeTab === 'tunnel'
               ? 'bg-gradient-to-r from-gold-dark via-gold to-gold-light text-navy-dark shadow-lg shadow-gold/30 scale-102 font-extrabold'
               : 'text-gray-300 hover:text-white hover:bg-white/5'
-          }`}
+            }`}
         >
           <span>🌍 어디서나(LTE/5G)</span>
           {publicLteUrl ? (
@@ -364,9 +341,8 @@ function TVLobby() {
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.25 }}
-        className={`glass-card p-6 md:p-8 border-2 shadow-2xl flex flex-col items-center max-w-md w-full ${
-          activeTab === 'wifi' ? 'border-emerald-500/40' : 'border-gold/40'
-        }`}
+        className={`glass-card p-6 md:p-8 border-2 shadow-2xl flex flex-col items-center max-w-md w-full ${activeTab === 'wifi' ? 'border-emerald-500/40' : 'border-gold/40'
+          }`}
       >
         {/* 상단 접속 모드 안내 배지 */}
         <div className="mb-4 px-4 py-1.5 rounded-full bg-navy-dark border text-xs md:text-sm font-bold flex items-center gap-2 shadow-inner">
@@ -498,11 +474,10 @@ function TVQuestion() {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`mb-4 px-6 py-2 rounded-2xl border text-center font-display shadow-lg ${
-            ruleMode === 'minority'
+          className={`mb-4 px-6 py-2 rounded-2xl border text-center font-display shadow-lg ${ruleMode === 'minority'
               ? 'bg-purple-950/70 border-purple-400 text-purple-200'
               : 'bg-gold/15 border-gold/40 text-gold-light'
-          }`}
+            }`}
         >
           <span className="text-base md:text-lg font-bold">
             {ruleMode === 'minority'
@@ -657,11 +632,10 @@ function TVVoting() {
         </motion.div>
 
         {/* 현재 룰 안내 배너 */}
-        <div className={`mb-6 px-6 py-2 rounded-full border text-sm md:text-base font-bold shadow-md flex items-center gap-2 ${
-          ruleMode === 'minority'
+        <div className={`mb-6 px-6 py-2 rounded-full border text-sm md:text-base font-bold shadow-md flex items-center gap-2 ${ruleMode === 'minority'
             ? 'bg-purple-950/70 border-purple-400 text-purple-200'
             : 'bg-gold/15 border-gold/40 text-gold-light'
-        }`}>
+          }`}>
           <span>{ruleMode === 'minority' ? '🎯 [소수의 선택]' : '👥 [다수의 선택]'}</span>
           <span>{ruleMode === 'minority' ? '더 적은 사람이 선택한 쪽이 생존합니다! (0표 제외)' : '더 많은 사람이 선택한 쪽이 생존합니다!'}</span>
         </div>
@@ -850,8 +824,8 @@ function TVResult() {
         <div className="w-full max-w-5xl grid grid-cols-[1fr_auto_1fr] gap-6 md:gap-8 items-stretch mb-8">
           {/* A 측 */}
           <div className={`rounded-3xl p-6 md:p-8 border-2 transition-all duration-700 flex flex-col justify-between ${currentResult.majority === 'A' || currentResult.majority === 'tie'
-              ? 'bg-team-a/25 border-team-a shadow-2xl shadow-team-a/30 scale-105'
-              : 'bg-gray-900/40 border-gray-800 opacity-50'
+            ? 'bg-team-a/25 border-team-a shadow-2xl shadow-team-a/30 scale-105'
+            : 'bg-gray-900/40 border-gray-800 opacity-50'
             }`}>
             <div>
               <span className="text-xs font-bold text-team-a-light block mb-1">OPTION A</span>
@@ -881,8 +855,8 @@ function TVResult() {
 
           {/* B 측 */}
           <div className={`rounded-3xl p-6 md:p-8 border-2 transition-all duration-700 flex flex-col justify-between ${currentResult.majority === 'B' || currentResult.majority === 'tie'
-              ? 'bg-team-b/25 border-team-b shadow-2xl shadow-team-b/30 scale-105'
-              : 'bg-gray-900/40 border-gray-800 opacity-50'
+            ? 'bg-team-b/25 border-team-b shadow-2xl shadow-team-b/30 scale-105'
+            : 'bg-gray-900/40 border-gray-800 opacity-50'
             }`}>
             <div>
               <span className="text-xs font-bold text-team-b-light block mb-1">OPTION B</span>
@@ -1083,8 +1057,8 @@ function TVLiveChatTicker() {
 
 // ===== TV 송출 메인 페이지 =====
 export default function TVPage() {
-  // 실시간 Firebase 및 상태 복원 동기화
-  useFirebaseSync()
+  // 실시간 웹소켓 상태 동기화 (3번 서바이벌 퀴즈 동일)
+  useSocketSync()
 
   const phase = useGameStore((s) => s.phase)
   const players = useGameStore((s) => s.players)

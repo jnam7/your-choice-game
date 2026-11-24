@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { socket } from '../socket'
-import { writeFirebasePlayer, removeFirebasePlayer, rtdb, RTDB_PATHS } from '../firebase'
-import { ref, onValue, off } from 'firebase/database'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
-import { useFirebaseSync } from '../hooks/useFirebaseSync'
+import { useSocketSync } from '../hooks/useSocketSync'
 import { LiveChatDrawer } from '../components/LiveChatDrawer'
 import {
   unlockAudioContext,
@@ -129,26 +127,23 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         joinedAt: Date.now(),
       }
 
-      // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장
+      // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장 및 로컬 스토어에 추가
       if (typeof window !== 'undefined') {
         localStorage.setItem('lasttwo_player_id', localId)
         localStorage.setItem('lasttwo_player_nickname', trimmed)
       }
 
       useGameStore.getState().setCurrentPlayer(localId)
+      useGameStore.getState().addPlayer(trimmed, localId)
 
-      // 2. [비동기 멈춤 100% 방지] 클릭 즉시 onJoin 호출하여 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
+      // 2. 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
       onJoin(newPlayer)
 
-      // 3. Firebase 저장은 백그라운드 비동기로 전달 (await 대기 없이 비동기 처리하여 화면 멈춤 차단)
-      writeFirebasePlayer(newPlayer).catch((fbErr) => {
-        console.error('❌ [NicknameForm] Firebase 백그라운드 등록 에러 (대기실 진입 유지):', fbErr)
-      })
-
-      // 4. 백그라운드로 소켓 및 REST API 백업 전송 (서버 인메모리 및 TV 보조 연동)
+      // 3. 서버에 소켓 참가자 등록 전송 (3번 서바이벌 퀴즈 동일)
       socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
         if (res?.success && res?.player) {
           onJoin(res.player)
+          useGameStore.getState().setCurrentPlayer(res.player.id)
         }
       })
 
@@ -248,9 +243,6 @@ function WaitingRoom({
   onNicknameChange?: (newNick: string) => void
   onLeave?: () => void
 }) {
-  // 실시간 웹소켓 및 Firebase 상태 동기화 (TVPage와 동일하게 대기실 최상단에서 직접 구독)
-  useFirebaseSync()
-
   const players = useGameStore((s) => s.players)
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
@@ -269,15 +261,6 @@ function WaitingRoom({
     if (!localId || !localNick) return
 
     const ensureRegistered = () => {
-      // Firebase RTDB 직접 갱신 (games/your-choice/players/${playerId})
-      writeFirebasePlayer({
-        id: localId,
-        nickname: localNick,
-        status: currentPlayer?.status || 'alive',
-        joinedAt: currentPlayer?.joinedAt || Date.now(),
-      }).catch((e) => {
-        console.error('❌ [WaitingRoom Heartbeat Error]', e)
-      })
       socket.emit('player:join', { id: localId, nickname: localNick })
       fetch('/api/game/join', {
         method: 'POST',
@@ -304,16 +287,6 @@ function WaitingRoom({
     }
     changeNickname(trimmed)
     onNicknameChange?.(trimmed)
-    if (currentPlayer?.id) {
-      writeFirebasePlayer({
-        id: currentPlayer.id,
-        nickname: trimmed,
-        status: currentPlayer.status || 'alive',
-        joinedAt: currentPlayer.joinedAt || Date.now(),
-      }).catch((e) => {
-        console.error('❌ [handleSaveNickname Firebase Error]', e)
-      })
-    }
     setIsEditing(false)
     setEditError('')
   }
@@ -1116,45 +1089,8 @@ function clearLocalPlayerSession() {
 
 // ===== 메인 직원 페이지 =====
 export default function PlayerPage() {
-  // 실시간 웹소켓 및 Firebase 상태 동기화
-  useFirebaseSync()
-
-  // 모바일 대기실 마운트 시 Firebase RTDB 직접 실시간 리스너 강제 바인딩 (더미 추가/상태 즉각 반영)
-  useEffect(() => {
-    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
-    const unsubPlayers = onValue(
-      playersRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        const list: Player[] = Array.isArray(val)
-          ? val.filter(Boolean)
-          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
-        useGameStore.getState().syncWithServer({ players: list })
-      },
-      (err) => {
-        console.error('❌ [PlayerPage] Firebase players onValue error:', err)
-      }
-    )
-
-    const stateRef = ref(rtdb, RTDB_PATHS.STATE)
-    const unsubState = onValue(
-      stateRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        if (val) {
-          useGameStore.getState().syncWithServer(val)
-        }
-      },
-      (err) => {
-        console.error('❌ [PlayerPage] Firebase state onValue error:', err)
-      }
-    )
-
-    return () => {
-      off(playersRef, 'value', unsubPlayers)
-      off(stateRef, 'value', unsubState)
-    }
-  }, [])
+  // 실시간 웹소켓 상태 동기화 (3번 서바이벌 퀴즈 동일)
+  useSocketSync()
 
   // Zustand selector를 통한 실시간 반응성 보장 (phase 변경 시 즉각 리렌더링)
   const phase = useGameStore((s) => s.phase)
@@ -1218,9 +1154,6 @@ export default function PlayerPage() {
   const handleExitGame = () => {
     const idToLeave = myPlayer?.id || currentPlayerId || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
     if (idToLeave) {
-      removeFirebasePlayer(idToLeave).catch((e) => {
-        console.error('❌ [handleExitGame removeFirebasePlayer Error]', e)
-      })
       socket.emit('player:leave', { id: idToLeave })
       fetch('/api/game/leave', {
         method: 'POST',
@@ -1247,7 +1180,7 @@ export default function PlayerPage() {
       if (phase === 'lobby') {
         const id = myPlayer?.id || (typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null)
         if (id) {
-          removeFirebasePlayer(id).catch(() => {})
+          socket.emit('player:leave', { id })
           const blob = new Blob([JSON.stringify({ id })], { type: 'application/json' })
           navigator.sendBeacon('/api/game/leave', blob)
         }

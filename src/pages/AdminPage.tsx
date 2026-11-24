@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
-import { ref, onValue, off } from 'firebase/database'
 import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
-import { useFirebaseSync } from '../hooks/useFirebaseSync'
-import { rtdb, RTDB_PATHS } from '../firebase'
+import { useSocketSync } from '../hooks/useSocketSync'
 import { exportGameResultsToExcel } from '../utils/excelExport'
 import type { Question, Player, ChatMessage } from '../types/game'
 
@@ -57,8 +55,8 @@ function PhaseBadge({ phase, isFinals, isPaused }: { phase: string; isFinals?: b
 }
 
 export default function AdminPage() {
-  // 실시간 Firebase 및 상태 복원 동기화
-  useFirebaseSync()
+  // 실시간 웹소켓 상태 동기화 (3번 서바이벌 퀴즈 동일)
+  useSocketSync()
 
   // Zustand 원자적 선택자를 통한 실시간 반응성 100% 보장 (참가자 입장 및 phase 변경 즉각 리렌더링)
   const phase = useGameStore((s) => s.phase)
@@ -104,22 +102,6 @@ export default function AdminPage() {
 
   // 관리자 화면 참가자 입장/갱신 이벤트 직결 수신
   useEffect(() => {
-    // Firebase RTDB players 실시간 리스너 직결 (games/your-choice/players)
-    const playersRef = ref(rtdb, RTDB_PATHS.PLAYERS)
-    const unsubPlayers = onValue(
-      playersRef,
-      (snapshot) => {
-        const val = snapshot.val()
-        const list: Player[] = Array.isArray(val)
-          ? val.filter(Boolean)
-          : (val && typeof val === 'object' ? (Object.values(val).filter(Boolean) as Player[]) : [])
-        useGameStore.getState().syncWithServer({ players: list })
-      },
-      (err) => {
-        console.error('❌ [AdminPage] Firebase players onValue error:', err)
-      }
-    )
-
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
       let list: Player[] = []
@@ -141,7 +123,6 @@ export default function AdminPage() {
     socket.on('players:update', handlePlayersUpdate)
 
     return () => {
-      off(playersRef, 'value', unsubPlayers)
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)

@@ -1,13 +1,5 @@
 import { create } from 'zustand'
 import { socket } from '../socket'
-import {
-  writeFirebaseState,
-  writeFirebasePlayer,
-  writeAllFirebasePlayers,
-  clearFirebasePlayers,
-  submitFirebaseVote,
-  clearFirebaseVotes,
-} from '../firebase'
 import type { GameState, GameActions, GamePhase, Player, RoundResult, Question, ChatMessage, RuleMode, QrMode } from '../types/game'
 import {
   questions as defaultQuestions,
@@ -190,8 +182,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           })),
         }
         socket.emit('admin:sync', syncPayload)
-        // Firebase Realtime DB에 즉시 직결 반영
-        writeFirebaseState(syncPayload).catch(() => {})
 
         // 관리자 또는 TV 콘솔인 경우 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
         if (window.location.pathname.includes('/admin') || window.location.pathname.includes('/tv')) {
@@ -317,19 +307,19 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       const newPlayer: Player = { id, nickname, status: 'alive' as const, joinedAt: Date.now() }
 
-      // 플레이어 ID 설정 (로컬 플레이어 목록을 임의로 증가시키지 않고 오직 Firebase 수신 데이터만 반영)
-      set({ currentPlayerId: id })
+      // 플레이어 ID 설정 및 로컬 플레이어 목록 즉시 반영
+      const currentPlayers = get().players
+      const playerExists = currentPlayers.some((p) => p.id === id)
+      set({
+        currentPlayerId: id,
+        players: playerExists ? currentPlayers : [...currentPlayers, newPlayer],
+      })
 
       if (typeof window !== 'undefined') {
         localStorage.setItem('lasttwo_player_id', id)
         localStorage.setItem('lasttwo_player_nickname', nickname)
       }
       persist()
-
-      // Firebase Realtime DB에 직접 등록 (games/your-choice/players/${id})
-      writeFirebasePlayer(newPlayer).catch((err) => {
-        console.error('❌ [addPlayer] Firebase 직접 쓰기 실패:', err)
-      })
 
       // 서버에 클라이언트 ID와 함께 웹소켓 참가자 등록 요청
       socket.emit('player:join', { id, nickname }, (response: any) => {
@@ -406,9 +396,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const allPlayers = [...get().players, ...newPlayers]
       set({ players: allPlayers })
       persist()
-
-      // Firebase Realtime DB에 전체 플레이어 즉시 직결 반영
-      writeAllFirebasePlayers(allPlayers).catch(() => {})
 
       // 서버에 더미 참가자 즉시 등록 및 전파
       socket.emit('admin:add_mock_players', { newPlayers, count })
@@ -507,7 +494,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         isPaused: false,
         votes: {},
       })
-      clearFirebaseVotes().catch(() => {})
       persist()
 
       // 3번 서바이벌 퀴즈 규격 이벤트 전송
@@ -558,7 +544,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       set((state) => ({
         votes: { ...state.votes, [playerId]: choice },
       }))
-      submitFirebaseVote(playerId, choice).catch(() => {})
       persist()
     },
 
@@ -843,8 +828,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       clearDummyVoteTimers()
       set({ players: [] })
       persist()
-      clearFirebasePlayers().catch(() => {})
-      writeFirebaseState({ players: [] }).catch(() => {})
       socket.emit('admin:clear_all_players')
       fetch('/api/game/reset', {
         method: 'POST',
