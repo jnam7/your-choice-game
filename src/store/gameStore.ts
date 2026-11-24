@@ -580,29 +580,38 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const { votes, players, currentQuestion, roundNumber, ruleMode } = get()
       if (!currentQuestion) return
 
-      const alivePlayers = players.filter((p) => p.status === 'alive')
+      // 이번 라운드 시작 시점에 생존해 있었던 참가자들 (이번 라운드 이전에 탈락한 인원만 제외)
+      // status === 'alive'이거나, 혹시 이미 eliminated 되었더라도 이번 라운드에 탈락 처리된 사람들은 포함
+      const eligiblePlayers = players.filter((p) => {
+        if (p.eliminatedRound && p.eliminatedRound < roundNumber) return false
+        return true
+      })
+      const eligibleIds = new Set(eligiblePlayers.map((p) => p.id))
 
-      // 오직 살아있는(alive) 참가자의 투표만 엄격히 집계 (탈락자 투표 왜곡 원천 차단)
-      const aliveVotes: Record<string, 'A' | 'B'> = {}
-      for (const p of alivePlayers) {
-        if (votes[p.id]) {
-          aliveVotes[p.id] = votes[p.id]
+      // 1. 이번 라운드에 제출된 모든 유효 투표 집계 (탈락 여부와 무관하게 실제 제출된 선택 데이터 보존)
+      // votes 객체에 기록된 모든 투표 중 이번 라운드 참가 가능했던 인원의 투표를 집계
+      const validVotes: Record<string, 'A' | 'B'> = {}
+      for (const [pId, choice] of Object.entries(votes)) {
+        if (eligibleIds.size === 0 || eligibleIds.has(pId)) {
+          if (choice === 'A' || choice === 'B') {
+            validVotes[pId] = choice
+          }
         }
       }
 
       let votesA = 0
       let votesB = 0
-      for (const choice of Object.values(aliveVotes)) {
+      for (const choice of Object.values(validVotes)) {
         if (choice === 'A') votesA++
         else if (choice === 'B') votesB++
       }
 
-      const voterIds = Object.keys(aliveVotes)
-      const nonVoterIds = alivePlayers
+      const voterIds = Object.keys(validVotes)
+      const nonVoterIds = eligiblePlayers
         .filter((p) => !voterIds.includes(p.id))
         .map((p) => p.id)
 
-      // 서바이벌 판정 (다수의 선택 vs 소수의 선택)
+      // 2. 서바이벌 판정 (다수의 선택 vs 소수의 선택)
       let majority: 'A' | 'B' | 'tie'
       let eliminatedIds: string[] = []
 
@@ -615,14 +624,14 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
             majority = 'tie'
             eliminatedIds = [...nonVoterIds]
           } else if (votesA < votesB) {
-            majority = 'A' // A 소수 승리
-            const minorityLosers = Object.entries(aliveVotes)
+            majority = 'A' // A 소수 승리 -> B 선택자 탈락
+            const minorityLosers = Object.entries(validVotes)
               .filter(([, choice]) => choice === 'B')
               .map(([id]) => id)
             eliminatedIds = [...minorityLosers, ...nonVoterIds]
           } else {
-            majority = 'B' // B 소수 승리
-            const minorityLosers = Object.entries(aliveVotes)
+            majority = 'B' // B 소수 승리 -> A 선택자 탈락
+            const minorityLosers = Object.entries(validVotes)
               .filter(([, choice]) => choice === 'A')
               .map(([id]) => id)
             eliminatedIds = [...minorityLosers, ...nonVoterIds]
@@ -647,23 +656,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           majority = 'tie'
           eliminatedIds = [...nonVoterIds]
         } else if (votesA > votesB) {
-          // A 다수 생존, B 소수 + 미투표자 탈락
+          // A 다수 생존, B 소수 선택자 + 미투표자 탈락
           majority = 'A'
-          const minorityIds = Object.entries(aliveVotes)
+          const minorityIds = Object.entries(validVotes)
             .filter(([, choice]) => choice === 'B')
             .map(([id]) => id)
           eliminatedIds = [...minorityIds, ...nonVoterIds]
         } else {
-          // B 다수 생존, A 소수 + 미투표자 탈락
+          // B 다수 생존, A 소수 선택자 + 미투표자 탈락
           majority = 'B'
-          const minorityIds = Object.entries(aliveVotes)
+          const minorityIds = Object.entries(validVotes)
             .filter(([, choice]) => choice === 'A')
             .map(([id]) => id)
           eliminatedIds = [...minorityIds, ...nonVoterIds]
         }
       }
 
-      let survivorIds = alivePlayers
+      let survivorIds = eligiblePlayers
         .filter((p) => !eliminatedIds.includes(p.id))
         .map((p) => p.id)
 
@@ -680,6 +689,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         }
       }
 
+      // 순수 투표 집계 보존: votesA와 votesB는 소수/탈락 여부와 상관없이 실제 투표 수 그대로 유지
       const result: RoundResult = {
         questionId: currentQuestion.id,
         question: currentQuestion,
@@ -698,9 +708,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       // 생존자가 2명 이하(0~2명)가 되는 순간 다음 라운드로 가지 않고 즉시 게임 종료(gameover)로 전환
       const nextPhase: GamePhase = isGameOver ? 'gameover' : 'result'
 
+      // 탈락자 상태 갱신 (기존 상태 보존하며 탈락자만 status = 'eliminated'로 업데이트)
       const updatedPlayers = get().players.map((p) =>
         eliminatedIds.includes(p.id)
-          ? { ...p, status: 'eliminated' as const, eliminatedRound: roundNumber }
+          ? { ...p, status: 'eliminated' as const, isAlive: false, eliminatedRound: roundNumber }
           : p
       )
 
@@ -715,15 +726,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }))
       persist()
 
-      if (isGameOver) {
-        socket.emit('admin:sync', {
-          phase: 'gameover',
-          isGameOver: true,
-          soleWinnerId,
-          currentResult: result,
-          players: updatedPlayers,
-        })
-      }
+      // 결과 화면이 모든 기기(TV, 모바일, 관리자)에 즉시 동일하게 동기화되도록 admin:sync 브로드캐스트
+      socket.emit('admin:sync', {
+        phase: nextPhase,
+        isGameOver,
+        soleWinnerId,
+        currentResult: result,
+        roundResults: [...get().roundResults],
+        players: updatedPlayers,
+        votes: { ...votes },
+      })
     },
 
     nextRound: () => {
