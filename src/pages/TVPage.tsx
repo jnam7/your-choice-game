@@ -1104,11 +1104,9 @@ function TVLiveChatSidebar() {
     }
 
     socket.on('chat:message', handleChatMessage)
-    socket.on('chat:received', handleChatMessage)
 
     return () => {
       socket.off('chat:message', handleChatMessage)
-      socket.off('chat:received', handleChatMessage)
     }
   }, [])
 

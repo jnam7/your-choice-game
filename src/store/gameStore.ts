@@ -33,6 +33,8 @@ export function clearDummyVoteTimers() {
 
 // admin:sync 무한 루프 방지용 마지막 전송 페이로드 캐시
 let lastSyncedPayloadStr = ''
+// 라운드 광속 스킵 방지용 디바운스 타임스탬프
+let lastNextRoundTime = 0
 
 // 로컬스토리지에서 복원
 function loadPersistedState(): Partial<GameState> {
@@ -242,7 +244,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         }
       })
 
-      // 소켓 양방향 이벤트 발행: chat:message 및 chat:send
+      // 소켓 단일 이벤트 발행: chat:send 1회 전송으로 중복 제거 및 0.1초 즉시 전송
       const payload = {
         id: newMsg.id,
         playerId: newMsg.playerId,
@@ -253,7 +255,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         timestamp: newMsg.timestamp,
         isNotice: newMsg.isNotice,
       }
-      socket.emit('chat:message', payload)
       socket.emit('chat:send', payload)
 
       if (chatChannel) {
@@ -261,8 +262,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           chatChannel.postMessage({ type: 'NEW_CHAT_MESSAGE', message: newMsg })
         } catch (e) { }
       }
-
-      persist()
     },
 
     addChatMessage: (msg: ChatMessage) => {
@@ -273,7 +272,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           chatMessages: [msg, ...state.chatMessages].slice(0, 50),
         }
       })
-      persist()
     },
 
     clearChatMessages: () => {
@@ -565,9 +563,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     submitVote: (playerId: string, choice: 'A' | 'B') => {
-      // 1. 탈락자 투표 차단
+      // 1. 탈락자 투표 완전 차단
       const player = get().players.find((p) => p.id === playerId)
-      if (player && player.status === 'eliminated') {
+      if (player && (player.status === 'eliminated' || player.isAlive === false)) {
         console.warn(`[submitVote 차단] 탈락자 (${player.nickname})는 투표할 수 없습니다.`)
         return
       }
@@ -791,7 +789,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     nextRound: () => {
-      const { players, timeLimit } = get()
+      // 2초 내 중복/연속 호출 방어 (광속 스킵 원천 차단)
+      const now = Date.now()
+      if (now - lastNextRoundTime < 2000) {
+        console.warn('⚠️ [nextRound 디바운스] 2초 내 중복 호출이 차단되었습니다.')
+        return
+      }
+      lastNextRoundTime = now
+
+      const { phase, players, timeLimit } = get()
+      // 결과 공개('result', 'elimination') 또는 대기실('lobby') 단계에서만 다음 라운드 진행 허용
+      if (phase !== 'result' && phase !== 'elimination' && phase !== 'lobby') {
+        console.warn(`⚠️ [nextRound 무시] 현재 단계(${phase})에서는 라운드를 건너뛸 수 없습니다.`)
+        return
+      }
+
       const alive = players.filter((p) => p.status === 'alive' || p.isAlive === true)
 
       if (alive.length <= 2) {

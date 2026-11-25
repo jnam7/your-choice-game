@@ -464,22 +464,26 @@ io.on('connection', (socket) => {
       }
 
       let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+      const isLobby = gameState.phase === 'lobby'
       if (!player) {
         player = {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
           nickname,
-          status: 'alive',
-          isAlive: true,
+          status: isLobby ? 'alive' : 'eliminated',
+          isAlive: isLobby,
           joinedAt: Date.now(),
         }
         gameState.players.push(player)
-        console.log(`👤 [PLAYER JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+        console.log(`👤 [PLAYER JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
       } else {
         if (requestedId) player.id = requestedId
         player.nickname = nickname
-        player.status = 'alive'
-        player.isAlive = true
-        console.log(`🔄 [PLAYER RE-JOIN / UPDATE] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+        // 게임 진행 중일 때는 기존 탈락자 상태를 alive로 부활시키지 않음! 대기실(lobby)일 때만 alive로 초기화
+        if (isLobby) {
+          player.status = 'alive'
+          player.isAlive = true
+        }
+        console.log(`🔄 [PLAYER RE-JOIN / UPDATE] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
       }
 
       broadcastState()
@@ -650,9 +654,25 @@ io.on('connection', (socket) => {
     }
   })
 
+  // 라운드 광속 스킵 방지용 마지막 트리거 시각
+  let lastServerNextRoundTime = 0
+
   // 다음 라운드 진행
   socket.on('admin:next_round', (data, callback) => {
     try {
+      const now = Date.now()
+      if (now - lastServerNextRoundTime < 1500) {
+        console.warn('⚠️ [SERVER admin:next_round] 1.5초 내 중복 요청 차단')
+        if (callback) callback({ success: false, reason: '중복 요청 차단' })
+        return
+      }
+      if (gameState.phase !== 'result' && gameState.phase !== 'lobby') {
+        console.warn(`⚠️ [SERVER admin:next_round] 현재 단계(${gameState.phase})에서는 진행할 수 없습니다.`)
+        if (callback) callback({ success: false, reason: '진행 불가 단계' })
+        return
+      }
+      lastServerNextRoundTime = now
+
       clearAllTimers()
       const alive = gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
       if (alive.length <= 2) {
@@ -869,12 +889,8 @@ io.on('connection', (socket) => {
         gameState.chatMessages.push(msg)
         if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
 
-        // 대상 룸 및 메인 룸, 전체 브로드캐스트로 100% 실시간 수신 보장
-        if (targetRoom) io.to(targetRoom).emit('chat:message', msg)
-        io.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
-        io.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+        // 대상 룸 및 전체 브로드캐스트: 단 1회 전송으로 소켓 리스너 누수 및 중복 지연 원천 차단
         io.emit('chat:message', msg)
-        io.emit('chat:received', msg)
       }
     } catch (e) {
       console.error('[chat error]', e)
@@ -1057,22 +1073,25 @@ app.post('/api/join', (req, res) => {
       return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
     }
     let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+    const isLobby = gameState.phase === 'lobby'
     if (!player) {
       player = {
         id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
         nickname,
-        status: 'alive',
-        isAlive: true,
+        status: isLobby ? 'alive' : 'eliminated',
+        isAlive: isLobby,
         joinedAt: Date.now(),
       }
       gameState.players.push(player)
-      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
     } else {
       if (requestedId) player.id = requestedId
       player.nickname = nickname
-      player.status = 'alive'
-      player.isAlive = true
-      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      if (isLobby) {
+        player.status = 'alive'
+        player.isAlive = true
+      }
+      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
     }
     broadcastState()
     broadcastPlayerJoined(player)
@@ -1147,22 +1166,25 @@ app.post('/api/game/join', (req, res) => {
       return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
     }
     let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+    const isLobby = gameState.phase === 'lobby'
     if (!player) {
       player = {
         id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
         nickname,
-        status: 'alive',
-        isAlive: true,
+        status: isLobby ? 'alive' : 'eliminated',
+        isAlive: isLobby,
         joinedAt: Date.now(),
       }
       gameState.players.push(player)
-      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
     } else {
       if (requestedId) player.id = requestedId
       player.nickname = nickname
-      player.status = 'alive'
-      player.isAlive = true
-      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      if (isLobby) {
+        player.status = 'alive'
+        player.isAlive = true
+      }
+      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명 (상태: ${player.status})`)
     }
     broadcastState()
     broadcastPlayerJoined(player)

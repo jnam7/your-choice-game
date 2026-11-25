@@ -179,7 +179,6 @@ export function useSocketSync() {
 
     socket.on('connect', handleConnect)
     socket.on('chat:message', handleIncomingChatMessage)
-    socket.on('chat:received', handleIncomingChatMessage)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
     socket.on('admin:sync', handleStateSync)
@@ -207,7 +206,6 @@ export function useSocketSync() {
       clearInterval(pollInterval)
       socket.off('connect', handleConnect)
       socket.off('chat:message', handleIncomingChatMessage)
-      socket.off('chat:received', handleIncomingChatMessage)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
       socket.off('admin:sync', handleStateSync)

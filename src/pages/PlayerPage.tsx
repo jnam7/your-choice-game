@@ -526,7 +526,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   const rawVotes = useGameStore((s) => s.votes)
   const votes = rawVotes && typeof rawVotes === 'object' ? rawVotes : {}
   
-  const isEliminated = currentPlayer?.status === 'eliminated'
+  const isEliminated = Boolean(currentPlayer && (currentPlayer.status === 'eliminated' || currentPlayer.isAlive === false))
 
   const effectiveId = currentPlayer?.id || currentPlayerId || safeStorage.getItem('lasttwo_player_id') || ''
   const myVote = (effectiveId && votes[effectiveId]) as 'A' | 'B' | undefined
@@ -657,7 +657,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
           className={`relative w-full py-7 px-5 rounded-2xl font-display text-xl md:text-2xl
                       text-white text-center transition-all duration-300
                       ${isEliminated
-              ? 'bg-gray-800/60 border-2 border-gray-600/40 opacity-60 cursor-not-allowed'
+              ? 'bg-gray-800/40 border-2 border-red-500/30 opacity-40 grayscale cursor-not-allowed pointer-events-none'
               : currentChoice === 'A'
                 ? 'btn-team-a ring-4 ring-white shadow-2xl shadow-team-a/60 scale-[1.02]'
                 : currentChoice === 'B'
@@ -696,7 +696,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
           className={`relative w-full py-7 px-5 rounded-2xl font-display text-xl md:text-2xl
                       text-white text-center transition-all duration-300
                       ${isEliminated
-              ? 'bg-gray-800/60 border-2 border-gray-600/40 opacity-60 cursor-not-allowed'
+              ? 'bg-gray-800/40 border-2 border-red-500/30 opacity-40 grayscale cursor-not-allowed pointer-events-none'
               : currentChoice === 'B'
                 ? 'btn-team-b ring-4 ring-white shadow-2xl shadow-team-b/60 scale-[1.02]'
                 : currentChoice === 'A'

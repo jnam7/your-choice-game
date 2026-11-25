@@ -215,20 +215,23 @@ export function syncPlugin(): Plugin {
       }
 
       let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+      const isLobby = gameState.phase === 'lobby'
       if (!player) {
         player = {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
           nickname,
-          status: 'alive',
-          isAlive: true,
+          status: isLobby ? 'alive' : 'eliminated',
+          isAlive: isLobby,
           joinedAt: Date.now(),
         }
         gameState.players.push(player)
       } else {
         if (requestedId) player.id = requestedId
         player.nickname = nickname
-        player.status = 'alive'
-        player.isAlive = true
+        if (isLobby) {
+          player.status = 'alive'
+          player.isAlive = true
+        }
       }
 
       broadcastState()
@@ -416,20 +419,23 @@ export function syncPlugin(): Plugin {
             return
           }
           let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+          const isLobby = gameState.phase === 'lobby'
           if (!player) {
             player = {
               id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
               nickname,
-              status: 'alive',
-              isAlive: true,
+              status: isLobby ? 'alive' : 'eliminated',
+              isAlive: isLobby,
               joinedAt: Date.now(),
             }
             gameState.players.push(player)
           } else {
             if (requestedId) player.id = requestedId
             player.nickname = nickname
-            player.status = 'alive'
-            player.isAlive = true
+            if (isLobby) {
+              player.status = 'alive'
+              player.isAlive = true
+            }
           }
           broadcastState()
           broadcastPlayerJoined(player)
@@ -561,7 +567,21 @@ export function syncPlugin(): Plugin {
         if (callback) callback({ success: true })
       })
 
+      // 라운드 광속 스킵 방지용 마지막 트리거 시각
+      let lastNextRoundTriggerTime = 0
+
       socket.on('admin:next_round', (data, callback) => {
+        const now = Date.now()
+        if (now - lastNextRoundTriggerTime < 1500) {
+          if (callback) callback({ success: false, reason: '중복 요청 차단' })
+          return
+        }
+        if (gameState.phase !== 'result' && gameState.phase !== 'lobby') {
+          if (callback) callback({ success: false, reason: '진행 불가 단계' })
+          return
+        }
+        lastNextRoundTriggerTime = now
+
         gameState.roundNumber += 1
         gameState.votes = {}
         gameState.currentResult = null
@@ -706,11 +726,8 @@ export function syncPlugin(): Plugin {
             gameState.chatMessages.push(msg)
             if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
 
-            if (targetRoom) ioInstance?.to(targetRoom).emit('chat:message', msg)
-            ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
-            ioInstance?.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
+            // 단 1회 브로드캐스트로 소켓 리스너 누수 및 중복 지연 원천 차단
             ioInstance?.emit('chat:message', msg)
-            ioInstance?.emit('chat:received', msg)
           }
         } catch (e) {
           console.error('[chat error]', e)
