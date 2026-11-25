@@ -9,13 +9,13 @@ import events from 'events'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 
-// 3번 서바이벌 퀴즈 규격: 150인 이상 동시 접속 시 리스너 초과 경고 방지 및 메모리 보호
-events.EventEmitter.defaultMaxListeners = 250
+// 3번 서바이벌 퀴즈 규격: 300인 이상 대규모 동시 접속 시 리스너 초과 경고 방지 및 메모리 보호
+events.EventEmitter.defaultMaxListeners = 500
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// 프로세스 크래시 방어 쉴드 (3번 프로젝트 동일)
+// 프로세스 크래시 방어 쉴드
 process.on('uncaughtException', (err) => {
   console.error('🛡️ [SERVER CRASH SHIELD] Uncaught Exception 방어됨:', err)
 })
@@ -24,18 +24,19 @@ process.on('unhandledRejection', (reason) => {
 })
 
 const app = express()
-const port = process.env.PORT || 5000
+const port = process.env.PORT || 4000
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER
 let publicTunnelUrl = process.env.RENDER_EXTERNAL_URL || ''
 let sshProcess = null
 let isReconnectingTunnel = false
 
-// Render 및 클라우드 즉시 응답 헬스체크 라우트 (3번 프로젝트 동일)
+// Render 및 클라우드 즉시 응답 헬스체크 라우트
 app.get('/healthz', (req, res) => res.status(200).send('OK'))
 app.get('/health', (req, res) => res.status(200).send('OK'))
 
 app.use(cors({ origin: '*' }))
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // 1. 프론트엔드 dist 정적 파일 단일 포트 통합 서빙
 const clientDistPath = path.resolve(__dirname, 'dist')
@@ -45,72 +46,390 @@ if (fs.existsSync(clientDistPath)) {
 
 const httpServer = http.createServer(app)
 
-// 2. 3번 서바이벌 퀴즈 동일 최적화 Socket.io 설정 (150인 동시 접속 최적화)
+// 2. Socket.io 설정 (최대 300인 동시 접속 최적화)
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,
-  maxHttpBufferSize: 2e7,
+  maxHttpBufferSize: 3e7,
   perMessageDeflate: false,
   allowEIO3: true,
 })
 
-// 3번 서바이벌 퀴즈 메인 룸 상수
+// 하위 호환성용 메인 룸 상수 (기본 1번 채널에 연결됨)
 const SOCKET_ROOM_MAIN = 'room:survival_quiz_main'
 
-// 인메모리 게임 상태
-const gameState = {
-  phase: 'lobby',
-  roundNumber: 0,
-  ruleMode: 'majority',
-  qrMode: 'wifi',
-  serverHostUrl: '',
-  currentQuestion: {
-    id: 1,
-    category: '음식',
-    optionA: '평생 치킨만 먹기',
-    optionB: '평생 피자만 먹기',
+// =========================================================
+// 5개 채널(룸) 완전 독립 상태 저장소 및 헬퍼
+// =========================================================
+const channels = new Map()
+
+function createInitialGameState(channelId = '1') {
+  return {
+    channelId: String(channelId || '1'),
+    phase: 'lobby',
+    roundNumber: 0,
+    ruleMode: 'majority',
+    qrMode: 'wifi',
+    serverHostUrl: '',
+    bgmVolume: 0.6,
+    currentQuestion: {
+      id: 1,
+      category: '음식',
+      optionA: '평생 치킨만 먹기',
+      optionB: '평생 피자만 먹기',
+      isFinals: false,
+    },
+    currentResult: null,
     isFinals: false,
-  },
-  currentResult: null,
-  isFinals: false,
-  isGameOver: false,
-  soleWinnerId: null,
-  isPaused: false,
-  timeLimit: 15,
-  votingDeadline: null,
-  timeLeft: 15,
-  players: [],
-  votes: {},
-  chatMessages: [],
+    isGameOver: false,
+    soleWinnerId: null,
+    isPaused: false,
+    timeLimit: 15,
+    votingDeadline: null,
+    timeLeft: 15,
+    players: [],
+    votes: {},
+    chatMessages: [],
+  }
 }
 
-// 3번 서바이벌 퀴즈 규격: 상태 브로드캐스트 (game:state_sync + state:sync 병행 전송)
-function broadcastState() {
-  io.to(SOCKET_ROOM_MAIN).emit('game:state_sync', gameState)
-  io.to(SOCKET_ROOM_MAIN).emit('state:sync', gameState)
-  io.emit('game:state_sync', gameState)
-  io.emit('state:sync', gameState)
+function getChannel(channelId = '1') {
+  const id = String(channelId || '1').trim() || '1'
+  if (!channels.has(id)) {
+    channels.set(id, {
+      id,
+      gameState: createInitialGameState(id),
+      votingTimer: null,
+      revealingTimer: null,
+      resultTransitionTimer: null,
+      usedQuestionIdsServer: new Set(),
+      lastServerNextRoundTime: 0,
+    })
+  }
+  return channels.get(id)
 }
 
-function broadcastPlayerJoined(player) {
-  io.to(SOCKET_ROOM_MAIN).emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
-  io.to(SOCKET_ROOM_MAIN).emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
-  io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-  io.emit('game:player_joined', { player, players: gameState.players, totalCount: gameState.players.length })
-  io.emit('player:joined', { player, players: gameState.players, totalCount: gameState.players.length })
-  io.emit('players:update', gameState.players)
+// 1~5번 채널 사전 초기화
+;['1', '2', '3', '4', '5'].forEach((id) => getChannel(id))
+
+// 기본 채널 1의 gameState 참조 (레거시 코드 호환용)
+const gameState = getChannel('1').gameState
+
+function getChannelRoom(channelId = '1') {
+  const id = String(channelId || '1').trim() || '1'
+  return `room:channel_${id}`
 }
 
-function applyAdminSync(updates) {
+function broadcastState(channelId = '1') {
+  const ch = getChannel(channelId)
+  const room = getChannelRoom(ch.id)
+  io.to(room).emit('game:state_sync', ch.gameState)
+  io.to(room).emit('state:sync', ch.gameState)
+  if (ch.id === '1') {
+    io.to(SOCKET_ROOM_MAIN).emit('game:state_sync', ch.gameState)
+    io.to(SOCKET_ROOM_MAIN).emit('state:sync', ch.gameState)
+  }
+}
+
+function clearAllTimers(channelId = '1') {
+  const ch = getChannel(channelId)
+  if (ch.votingTimer) {
+    clearTimeout(ch.votingTimer)
+    ch.votingTimer = null
+  }
+  if (ch.revealingTimer) {
+    clearTimeout(ch.revealingTimer)
+    ch.revealingTimer = null
+  }
+  if (ch.resultTransitionTimer) {
+    clearTimeout(ch.resultTransitionTimer)
+    ch.resultTransitionTimer = null
+  }
+}
+
+// 1. 서버 주도 투표 타이머 시작
+function startServerVoting(channelId = '1', limit = 15) {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  ch.gameState.phase = 'voting'
+  ch.gameState.timeLimit = limit
+  ch.gameState.votingDeadline = Date.now() + limit * 1000
+  ch.gameState.timeLeft = limit
+  ch.gameState.isPaused = false
+  ch.gameState.votes = {}
+
+  console.log(`⏱️ [CH ${ch.id} VOTING] ${limit}초 투표 시작`)
+  broadcastState(ch.id)
+  const room = getChannelRoom(ch.id)
+  const payload = {
+    channelId: ch.id,
+    roundNumber: ch.gameState.roundNumber,
+    question: ch.gameState.currentQuestion,
+    timeLimit: limit,
+    votingDeadline: ch.gameState.votingDeadline,
+  }
+  io.to(room).emit('game:round_started', payload)
+  if (ch.id === '1') {
+    io.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
+  }
+
+  ch.votingTimer = setTimeout(() => {
+    ch.votingTimer = null
+    if (ch.gameState.phase !== 'voting' || ch.gameState.isPaused) return
+    console.log(`⏰ [CH ${ch.id} VOTING] 15초 만료 -> 결과 집계 서스펜스 단계 진입`)
+    startServerRevealing(ch.id)
+  }, limit * 1000)
+}
+
+// 2. 서버 주도 3초 서스펜스 타이머 시작
+function startServerRevealing(channelId = '1') {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  ch.gameState.phase = 'revealing'
+  ch.gameState.timeLeft = 3
+  ch.gameState.votingDeadline = null
+  ch.gameState.isPaused = false
+  broadcastState(ch.id)
+
+  ch.revealingTimer = setTimeout(() => {
+    ch.revealingTimer = null
+    if (ch.gameState.phase !== 'revealing' || ch.gameState.isPaused) return
+    console.log(`📊 [CH ${ch.id} REVEALING] 3초 만료 -> 결과 계산 및 발표 단계 진입`)
+    computeAndPublishResult(ch.id)
+  }, 3000)
+}
+
+// 3. 서버 주도 투표 집계 및 판정
+function computeAndPublishResult(channelId = '1') {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  const { votes, players, currentQuestion, roundNumber, ruleMode } = ch.gameState
+
+  const eligiblePlayers = players.filter((p) => {
+    if (p.eliminatedRound && p.eliminatedRound < roundNumber) return false
+    return true
+  })
+  const eligibleIds = new Set(eligiblePlayers.map((p) => p.id))
+
+  const validVotes = {}
+  for (const [pId, choice] of Object.entries(votes || {})) {
+    if (eligibleIds.size === 0 || eligibleIds.has(pId)) {
+      if (choice === 'A' || choice === 'B') {
+        validVotes[pId] = choice
+      }
+    }
+  }
+
+  let votesA = 0
+  let votesB = 0
+  for (const choice of Object.values(validVotes)) {
+    if (choice === 'A') votesA++
+    else if (choice === 'B') votesB++
+  }
+
+  const voterIds = Object.keys(validVotes)
+  const nonVoterIds = eligiblePlayers
+    .filter((p) => !voterIds.includes(p.id))
+    .map((p) => p.id)
+
+  let majority
+  let eliminatedIds = []
+
+  if (ruleMode === 'minority') {
+    if (votesA > 0 && votesB > 0) {
+      if (votesA === votesB) {
+        majority = 'tie'
+        eliminatedIds = [...nonVoterIds]
+      } else if (votesA < votesB) {
+        majority = 'A'
+        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+        eliminatedIds = [...minorityLosers, ...nonVoterIds]
+      } else {
+        majority = 'B'
+        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+        eliminatedIds = [...minorityLosers, ...nonVoterIds]
+      }
+    } else if (votesA > 0 && votesB === 0) {
+      majority = 'A'
+      eliminatedIds = [...nonVoterIds]
+    } else if (votesA === 0 && votesB > 0) {
+      majority = 'B'
+      eliminatedIds = [...nonVoterIds]
+    } else {
+      majority = 'tie'
+      eliminatedIds = [...nonVoterIds]
+    }
+  } else {
+    // 다수의 선택 모드
+    if (votesA === votesB) {
+      majority = 'tie'
+      eliminatedIds = [...nonVoterIds]
+    } else if (votesA > votesB) {
+      majority = 'A'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    } else {
+      majority = 'B'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    }
+  }
+
+  const survivorIds = eligiblePlayers.filter((p) => !eliminatedIds.includes(p.id)).map((p) => p.id)
+  const isGameOver = survivorIds.length <= 2
+  const soleWinnerId = survivorIds.length === 1 ? survivorIds[0] : null
+
+  const result = {
+    channelId: ch.id,
+    questionId: currentQuestion?.id || 1,
+    question: currentQuestion,
+    votesA,
+    votesB,
+    totalVoters: voterIds.length,
+    nonVoters: nonVoterIds.length,
+    majority,
+    ruleMode,
+    eliminated: eliminatedIds,
+    survivors: survivorIds,
+    winnerCount: isGameOver ? survivorIds.length : 0,
+    soleWinnerId,
+  }
+
+  // 플레이어 탈락 상태 갱신
+  for (const p of ch.gameState.players) {
+    if (eliminatedIds.includes(p.id)) {
+      p.status = 'eliminated'
+      p.isAlive = false
+      p.eliminatedRound = roundNumber
+    }
+  }
+
+  ch.gameState.currentResult = result
+  ch.gameState.isGameOver = isGameOver
+  ch.gameState.soleWinnerId = soleWinnerId
+  ch.gameState.phase = 'result'
+
+  console.log(`📢 [CH ${ch.id} RESULT] A(${votesA}) vs B(${votesB}), 승리: ${majority}, 남은 생존자: ${survivorIds.length}명`)
+  broadcastState(ch.id)
+  scheduleServerResultTransition(ch.id)
+}
+
+// 서버 질문 풀
+const serverMajorityQuestions = [
+  { id: 1, category: '음식', optionA: '평생 치킨만 먹기', optionB: '평생 피자만 먹기', isFinals: false },
+  { id: 2, category: '음식', optionA: '탕수육 소스 부먹', optionB: '탕수육 소스 찍먹', isFinals: false },
+  { id: 3, category: '음식', optionA: '평생 탄산음료 없이 살기', optionB: '평생 라면 없이 살기', isFinals: false },
+  { id: 4, category: '음식', optionA: '아침 식사 평생 굶기', optionB: '야식 평생 굶기', isFinals: false },
+  { id: 5, category: '음식', optionA: '식후 아메리카노 영구 금지', optionB: '식후 달콤한 디저트 영구 금지', isFinals: false },
+  { id: 6, category: '음식', optionA: '삼겹살 평생 금지', optionB: '떡볶이 평생 금지', isFinals: false },
+  { id: 7, category: '음식', optionA: '평생 소고기만 먹기', optionB: '평생 돼지고기만 먹기', isFinals: false },
+  { id: 8, category: '음식', optionA: '무조건 맵고 자극적인 음식만 먹기', optionB: '무조건 싱겁고 담백한 음식만 먹기', isFinals: false },
+  { id: 9, category: '음식', optionA: '덜 익은 꼬들꼬들 라면 먹기', optionB: '푹 퍼지고 부드러운 라면 먹기', isFinals: false },
+  { id: 10, category: '음식', optionA: '평생 단 음식 금지', optionB: '평생 짠 음식 금지', isFinals: false },
+  { id: 11, category: '직장생활', optionA: '월요일 2시간 일찍 출근하기', optionB: '금요일 2시간 늦게 퇴근하기', isFinals: false },
+  { id: 12, category: '직장생활', optionA: '월급 300만원 정시 칼퇴근', optionB: '월급 500만원 매일 야근 2시간', isFinals: false },
+  { id: 13, category: '직장생활', optionA: '사내 식당 매일 고퀄리티 무료 제공', optionB: '매달 점심 식대 30만원 계좌 입금', isFinals: false },
+  { id: 14, category: '직장생활', optionA: '완벽한 능력 상사 + 힘든 업무', optionB: '일 못하는 무능 상사 + 쉬운 업무', isFinals: false },
+  { id: 15, category: '직장생활', optionA: '연봉 1,000만원 인상 + 주 6일 출근', optionB: '현재 연봉 그대로 유지 + 주 4일 출근', isFinals: false },
+  { id: 16, category: '직장생활', optionA: '일 잘하는데 성격 차가운 동료', optionB: '일 못하는데 한없이 착하고 친절한 동료', isFinals: false },
+  { id: 17, category: '직장생활', optionA: '전 사원 앞에서 박수받으며 우수사원 표창', optionB: '아무도 모르게 계좌로 특별 상여금 100만원 입금', isFinals: false },
+  { id: 18, category: '직장생활', optionA: '회식 1차에서 고기 먹고 9시 칼귀가', optionB: '회식 3차까지 대표님과 함께 달리기', isFinals: false },
+  { id: 19, category: '직장생활', optionA: '매주 월요일 아침 9시 전체 회의', optionB: '매주 금요일 오후 5시 주간 보고 회의', isFinals: false },
+  { id: 20, category: '직장생활', optionA: '1년 내내 모든 프로젝트 대성공', optionB: '1년 내내 평화롭게 월급 루팡 성공', isFinals: false },
+]
+
+const serverMinorityQuestions = [
+  { id: 101, category: '직장/곤란', optionA: '사무실 옆자리 쉼 없는 수다쟁이 동료', optionB: '사무실 옆자리 말 한마디 안 섞는 무반응 동료', isFinals: false },
+  { id: 102, category: '직장/곤란', optionA: '점심시간 칼같이 30분만 부여', optionB: '매일 출근 시간 1시간 앞당겨지기', isFinals: false },
+  { id: 103, category: '직장/곤란', optionA: '직속 팀장님 바로 앞에서 치명적 엑셀 실수', optionB: '대표님 주재 전사 타운홀 미팅에서 대놓고 졸기', isFinals: false },
+  { id: 104, category: '직장/곤란', optionA: '매주 금요일 사내 회식 필참 1년', optionB: '사내 모든 회식 및 부서 친목 영구 금지', isFinals: false },
+  { id: 105, category: '직장/곤란', optionA: '직속 상사 결혼식 단독 사회자 맡기', optionB: '직속 상사 부모님 칠순 잔치 단독 축가 부르기', isFinals: false },
+]
+
+function getNextServerQuestion(channelId = '1', ruleMode) {
+  const ch = getChannel(channelId)
+  const pool = ruleMode === 'minority' ? serverMinorityQuestions : serverMajorityQuestions
+  let available = pool.filter((q) => !ch.usedQuestionIdsServer.has(q.id))
+  if (available.length === 0) {
+    ch.usedQuestionIdsServer.clear()
+    available = [...pool]
+  }
+  const picked = available[Math.floor(Math.random() * available.length)]
+  ch.usedQuestionIdsServer.add(picked.id)
+  return picked
+}
+
+function scheduleServerResultTransition(channelId = '1') {
+  const ch = getChannel(channelId)
+  if (ch.resultTransitionTimer) {
+    clearTimeout(ch.resultTransitionTimer)
+    ch.resultTransitionTimer = null
+  }
+  console.log(`⏱️ [CH ${ch.id} TRANSITION] 결과 공개 5초 후 전환 예약됨`)
+
+  ch.resultTransitionTimer = setTimeout(() => {
+    ch.resultTransitionTimer = null
+    if (ch.gameState.phase !== 'result' || ch.gameState.isPaused) {
+      return
+    }
+
+    const alivePlayers = ch.gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
+    console.log(`🏁 [CH ${ch.id} TRANSITION] 5초 경과 -> 생존자 ${alivePlayers.length}명 판정`)
+
+    if (alivePlayers.length <= 2) {
+      ch.gameState.phase = 'gameover'
+      ch.gameState.isGameOver = true
+      ch.gameState.soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null
+      console.log(`🏆 [CH ${ch.id}] 게임 종료! (생존자 ${alivePlayers.length}명, 우승자: ${ch.gameState.soleWinnerId || '없음/공동'})`)
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      const payload = {
+        channelId: ch.id,
+        survivors: alivePlayers,
+        winnerCount: alivePlayers.length,
+        soleWinnerId: ch.gameState.soleWinnerId,
+      }
+      io.to(room).emit('game:game_over', payload)
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('game:game_over', payload)
+      }
+      return
+    }
+
+    ch.gameState.roundNumber += 1
+    ch.gameState.currentQuestion = getNextServerQuestion(ch.id, ch.gameState.ruleMode)
+    const limit = ch.gameState.timeLimit || 15
+    console.log(`🚀 [CH ${ch.id}] 다음 라운드(${ch.gameState.roundNumber}) 시작! (제한시간: ${limit}초)`)
+    startServerVoting(ch.id, limit)
+  }, 5000)
+}
+
+function broadcastPlayerJoined(player, channelId = '1') {
+  const ch = getChannel(channelId)
+  const room = getChannelRoom(ch.id)
+  const payload = { channelId: ch.id, player, players: ch.gameState.players, totalCount: ch.gameState.players.length }
+  io.to(room).emit('game:player_joined', payload)
+  io.to(room).emit('player:joined', payload)
+  io.to(room).emit('players:update', ch.gameState.players)
+  if (ch.id === '1') {
+    io.to(SOCKET_ROOM_MAIN).emit('game:player_joined', payload)
+    io.to(SOCKET_ROOM_MAIN).emit('player:joined', payload)
+    io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+  }
+}
+
+function applyAdminSync(updates, channelId = '1') {
+  const ch = getChannel(channelId)
   if (updates && typeof updates === 'object') {
-    const { players: incomingPlayers, ...safeUpdates } = updates
-    Object.assign(gameState, safeUpdates)
+    const oldPhase = ch.gameState.phase
+    const { players: incomingPlayers, channelId: _ch, ...safeUpdates } = updates
+    Object.assign(ch.gameState, safeUpdates)
 
     if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
       const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
-      for (const p of gameState.players) {
+      for (const p of ch.gameState.players) {
         if (statusMap.has(p.id)) {
           p.status = statusMap.get(p.id)
         }
@@ -119,7 +438,7 @@ function applyAdminSync(updates) {
 
     if (updates.currentResult?.eliminated && Array.isArray(updates.currentResult.eliminated)) {
       const elimSet = new Set(updates.currentResult.eliminated)
-      for (const p of gameState.players) {
+      for (const p of ch.gameState.players) {
         if (elimSet.has(p.id)) {
           p.status = 'eliminated'
           p.eliminatedRound = updates.roundNumber
@@ -128,22 +447,77 @@ function applyAdminSync(updates) {
     }
 
     if (updates.currentResult) {
-      gameState.currentResult = updates.currentResult
+      ch.gameState.currentResult = updates.currentResult
     }
 
-    console.log(`🔄 [STATE SYNC] Phase: ${gameState.phase}, Round: ${gameState.roundNumber}, Result: ${gameState.currentResult ? '있음' : '없음'}`)
-    broadcastState()
+    console.log(`🔄 [CH ${ch.id} SYNC] Phase: ${oldPhase} -> ${ch.gameState.phase}, Round: ${ch.gameState.roundNumber}`)
+    broadcastState(ch.id)
+
+    if (ch.gameState.phase === 'result') {
+      if (oldPhase !== 'result' || !ch.resultTransitionTimer) {
+        scheduleServerResultTransition(ch.id)
+      }
+    } else {
+      if (ch.resultTransitionTimer) {
+        clearTimeout(ch.resultTransitionTimer)
+        ch.resultTransitionTimer = null
+      }
+    }
   }
 }
 
-// 3. Socket.io 실시간 이벤트 핸들러 (3번 서바이벌 퀴즈 규격)
+// =========================================================
+// Socket.io 실시간 이벤트 핸들러 (채널 격리 지원)
+// =========================================================
 io.on('connection', (socket) => {
-  // 메인 룸 자동 조인
+  socket.data = socket.data || {}
+  socket.data.channelId = '1'
+
+  // 기본 채널 1 및 메인 룸 자동 조인 (하위 호환 100% 보장)
+  socket.join('room:channel_1')
   socket.join(SOCKET_ROOM_MAIN)
 
-  // 최초 접속 시 현재 상태 즉시 전달 (3번 규격: game:state_sync)
-  socket.emit('game:state_sync', gameState)
-  socket.emit('state:sync', gameState)
+  const getEventChannelId = (data) => {
+    const raw = data?.channelId || data?.channel || socket.data?.channelId || '1'
+    return String(raw).trim() || '1'
+  }
+
+  // 채널 조인 핸들러
+  socket.on('join:channel', (data, callback) => {
+    const targetChannel = getEventChannelId(data)
+    for (const r of socket.rooms) {
+      if (r.startsWith('room:channel_') && r !== getChannelRoom(targetChannel)) {
+        socket.leave(r)
+      }
+    }
+    socket.join(getChannelRoom(targetChannel))
+    if (targetChannel === '1') {
+      socket.join(SOCKET_ROOM_MAIN)
+    }
+    socket.data.channelId = targetChannel
+    const ch = getChannel(targetChannel)
+    socket.emit('game:state_sync', ch.gameState)
+    socket.emit('state:sync', ch.gameState)
+    console.log(`📡 [SOCKET JOIN:CHANNEL] Socket ${socket.id} -> 채널 ${targetChannel} (${data?.role || 'user'})`)
+    if (callback) callback({ success: true, channelId: targetChannel, state: ch.gameState })
+  })
+
+  // 룸 조인 이벤트 수신 (join:room 및 join 호환)
+  socket.on('join:room', (data) => {
+    const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+    socket.join(targetRoom)
+    if (data?.channelId) {
+      socket.data.channelId = String(data.channelId).trim() || '1'
+    }
+  })
+  socket.on('join', (data) => {
+    const targetRoom = typeof data === 'string' ? data : (data?.roomId || SOCKET_ROOM_MAIN)
+    socket.join(targetRoom)
+  })
+
+  // 최초 접속 시 현재 상태 즉시 전달
+  socket.emit('game:state_sync', getChannel('1').gameState)
+  socket.emit('state:sync', getChannel('1').gameState)
 
   if (publicTunnelUrl) {
     socket.emit('server:tunnel_updated', publicTunnelUrl)
@@ -152,6 +526,8 @@ io.on('connection', (socket) => {
   // 1. 참가자 등록 (player:join)
   socket.on('player:join', (data, callback) => {
     try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
       const nickname = (data?.nickname || '').trim()
       const requestedId = data?.id || data?.token
 
@@ -160,28 +536,31 @@ io.on('connection', (socket) => {
         return
       }
 
-      let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+      let player = ch.gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+      const isLobby = ch.gameState.phase === 'lobby'
       if (!player) {
         player = {
           id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
           nickname,
-          status: 'alive',
-          isAlive: true,
+          status: isLobby ? 'alive' : 'eliminated',
+          isAlive: isLobby,
           joinedAt: Date.now(),
         }
-        gameState.players.push(player)
-        console.log(`👤 [PLAYER JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+        ch.gameState.players.push(player)
+        console.log(`👤 [CH ${ch.id} PLAYER JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${ch.gameState.players.length}명`)
       } else {
         if (requestedId) player.id = requestedId
         player.nickname = nickname
-        player.status = 'alive'
-        player.isAlive = true
-        console.log(`🔄 [PLAYER RE-JOIN / UPDATE] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+        if (isLobby) {
+          player.status = 'alive'
+          player.isAlive = true
+        }
+        console.log(`🔄 [CH ${ch.id} PLAYER RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${ch.gameState.players.length}명`)
       }
 
-      broadcastState()
-      broadcastPlayerJoined(player)
-      if (callback) callback({ success: true, player, players: gameState.players })
+      broadcastState(ch.id)
+      broadcastPlayerJoined(player, ch.id)
+      if (callback) callback({ success: true, player, players: ch.gameState.players, channelId: ch.id })
     } catch (e) {
       console.error('[player:join Error]', e)
     }
@@ -190,6 +569,8 @@ io.on('connection', (socket) => {
   // 1-1. 참가자 닉네임 수정
   socket.on('player:change_nickname', (data, callback) => {
     try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
       const { id, newNickname } = data || {}
       const trimmed = (newNickname || '').trim()
 
@@ -198,15 +579,15 @@ io.on('connection', (socket) => {
         return
       }
 
-      const player = gameState.players.find((p) => p.id === id)
+      const player = ch.gameState.players.find((p) => p.id === id)
       if (player) {
         const oldNick = player.nickname
         player.nickname = trimmed
-        console.log(`✏️ [NICKNAME CHANGED] ${oldNick} -> ${trimmed}`)
-        for (const msg of gameState.chatMessages) {
+        console.log(`✏️ [CH ${ch.id} NICKNAME CHANGED] ${oldNick} -> ${trimmed}`)
+        for (const msg of ch.gameState.chatMessages) {
           if (msg.nickname === oldNick) msg.nickname = trimmed
         }
-        broadcastState()
+        broadcastState(ch.id)
         if (callback) callback({ success: true, player })
       } else {
         if (callback) callback({ success: false, error: '참가자 정보를 찾을 수 없습니다.' })
@@ -219,18 +600,24 @@ io.on('connection', (socket) => {
   // 참가자 퇴장 처리 (player:leave)
   socket.on('player:leave', (data, callback) => {
     try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
       const id = data?.id
       if (id) {
-        const found = gameState.players.find((p) => p.id === id)
-        gameState.players = gameState.players.filter((p) => p.id !== id)
-        if (gameState.votes && gameState.votes[id]) {
-          delete gameState.votes[id]
+        const found = ch.gameState.players.find((p) => p.id === id)
+        ch.gameState.players = ch.gameState.players.filter((p) => p.id !== id)
+        if (ch.gameState.votes && ch.gameState.votes[id]) {
+          delete ch.gameState.votes[id]
         }
-        broadcastState()
-        io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
-        io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-        io.emit('players:update', gameState.players)
-        console.log(`🚪 [PLAYER LEFT] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
+        broadcastState(ch.id)
+        const room = getChannelRoom(ch.id)
+        io.to(room).emit('player:left', { id, channelId: ch.id })
+        io.to(room).emit('players:update', ch.gameState.players)
+        if (ch.id === '1') {
+          io.to(SOCKET_ROOM_MAIN).emit('player:left', { id, channelId: ch.id })
+          io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+        }
+        console.log(`🚪 [CH ${ch.id} PLAYER LEFT] ${found?.nickname || id} 퇴장`)
       }
       if (callback) callback({ success: true })
     } catch (e) {
@@ -238,29 +625,31 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 2. 참가자 투표 제출 (player:vote 및 3번 호환 player:submit_answer)
-  const handleVote = (playerId, choice, callback) => {
+  // 2. 참가자 투표 제출
+  const handleVote = (playerId, choice, data, callback) => {
     try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
       if (!playerId || (choice !== 'A' && choice !== 'B')) {
         if (callback) callback({ success: false, error: '잘못된 투표 요청입니다.' })
         return
       }
 
-      const player = gameState.players.find((p) => p.id === playerId)
+      const player = ch.gameState.players.find((p) => p.id === playerId)
       if (player && (player.status === 'eliminated' || player.isAlive === false)) {
         if (callback) callback({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
         return
       }
 
       const allowedPhases = ['voting', 'question', 'revealing']
-      if (!allowedPhases.includes(gameState.phase)) {
+      if (!allowedPhases.includes(ch.gameState.phase)) {
         if (callback) callback({ success: false, error: '투표 진행 중이 아닙니다.' })
         return
       }
 
-      gameState.votes[playerId] = choice
-      console.log(`🗳️ [PLAYER VOTE] ${player ? player.nickname : playerId} -> [${choice}] (총 투표: ${Object.keys(gameState.votes).length}표)`)
-      broadcastState()
+      ch.gameState.votes[playerId] = choice
+      console.log(`🗳️ [CH ${ch.id} VOTE] ${player ? player.nickname : playerId} -> [${choice}] (총: ${Object.keys(ch.gameState.votes).length})`)
+      broadcastState(ch.id)
       if (callback) callback({ success: true })
     } catch (e) {
       if (callback) callback({ success: false, error: e.message })
@@ -268,225 +657,274 @@ io.on('connection', (socket) => {
   }
 
   socket.on('player:vote', (data, callback) => {
-    handleVote(data?.playerId, data?.choice, callback)
+    handleVote(data?.playerId, data?.choice, data, callback)
   })
 
   socket.on('player:submit_answer', (data, callback) => {
     const choice = data?.choice || (data?.answerIndex === 0 ? 'A' : (data?.answerIndex === 1 ? 'B' : null))
     const pId = data?.playerId || data?.token || socket.id
-    handleVote(pId, choice, callback)
+    handleVote(pId, choice, data, callback)
   })
 
-  // ==========================================
-  // 3. 3번 서바이벌 퀴즈 규격 관리자 핵심 이벤트
-  // ==========================================
-
-  // [핵심] 게임 시작: 3번 프로젝트의 admin:start_game
+  // 3. 관리자 제어 이벤트
   socket.on('admin:start_game', (data, callback) => {
     try {
-      console.log('🚀 [3번 서바이벌 퀴즈 규격] admin:start_game 수신 -> 전 기기 동시 라운드 시작!')
-      gameState.roundNumber = 1
-      gameState.votes = {}
-      gameState.currentResult = null
-      gameState.isGameOver = false
-      gameState.soleWinnerId = null
-      gameState.isPaused = false
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      console.log(`🚀 [CH ${ch.id}] admin:start_game 수신 -> 라운드 시작!`)
+      clearAllTimers(ch.id)
+      ch.gameState.roundNumber = 1
+      ch.gameState.votes = {}
+      ch.gameState.currentResult = null
+      ch.gameState.isGameOver = false
+      ch.gameState.soleWinnerId = null
+      ch.gameState.isPaused = false
 
-      // 전원 생존 복구
-      gameState.players.forEach((p) => {
+      ch.gameState.players.forEach((p) => {
         p.status = 'alive'
         p.isAlive = true
         p.eliminatedRound = undefined
       })
 
-      if (data?.question) {
-        gameState.currentQuestion = data.question
-      }
-      if (data?.ruleMode) {
-        gameState.ruleMode = data.ruleMode
-      }
+      if (data?.question) ch.gameState.currentQuestion = data.question
+      if (data?.ruleMode) ch.gameState.ruleMode = data.ruleMode
 
-      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
-      gameState.timeLimit = limit
+      const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
+      ch.gameState.timeLimit = limit
 
       if (data?.autoStartVoting !== false) {
-        gameState.phase = 'voting'
-        gameState.votingDeadline = Date.now() + limit * 1000
-        gameState.timeLeft = limit
+        startServerVoting(ch.id, limit)
       } else {
-        gameState.phase = 'question'
-        gameState.votingDeadline = null
-        gameState.timeLeft = limit
+        ch.gameState.phase = 'question'
+        ch.gameState.votingDeadline = null
+        ch.gameState.timeLeft = limit
+        broadcastState(ch.id)
       }
 
-      broadcastState()
-
-      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
-        roundNumber: 1,
-        question: gameState.currentQuestion,
-        timeLimit: gameState.timeLimit,
-        votingDeadline: gameState.votingDeadline,
-      })
-
-      if (callback) callback({ success: true, phase: gameState.phase })
+      if (callback) callback({ success: true, phase: ch.gameState.phase, channelId: ch.id })
     } catch (err) {
       console.error('[admin:start_game Error]:', err)
       if (callback) callback({ success: false, error: err.message })
     }
   })
 
-  // 15초 투표 시작
   socket.on('admin:start_voting', (data, callback) => {
     try {
-      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
-      gameState.phase = 'voting'
-      gameState.timeLimit = limit
-      gameState.votingDeadline = Date.now() + limit * 1000
-      gameState.timeLeft = limit
-      gameState.isPaused = false
-      gameState.votes = {}
-      broadcastState()
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
+      startServerVoting(ch.id, limit)
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
     }
   })
 
-  // 투표 조기 마감 및 결과 공개 서스펜스 카운트다운
   socket.on('admin:end_voting', (data, callback) => {
     try {
-      gameState.phase = 'revealing'
-      gameState.timeLeft = 3
-      gameState.isPaused = false
-      broadcastState()
+      const chId = getEventChannelId(data)
+      startServerRevealing(chId)
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
     }
   })
 
-  // 다음 라운드 진행
   socket.on('admin:next_round', (data, callback) => {
     try {
-      gameState.roundNumber += 1
-      gameState.votes = {}
-      gameState.currentResult = null
-      if (data?.question) {
-        gameState.currentQuestion = data.question
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const now = Date.now()
+      if (now - ch.lastServerNextRoundTime < 1500) {
+        console.warn(`⚠️ [CH ${ch.id} admin:next_round] 1.5초 내 중복 요청 차단`)
+        if (callback) callback({ success: false, reason: '중복 요청 차단' })
+        return
       }
-      const limit = Number(data?.timeLimit) || gameState.timeLimit || 15
-      gameState.timeLimit = limit
-      gameState.phase = 'voting'
-      gameState.votingDeadline = Date.now() + limit * 1000
-      gameState.timeLeft = limit
-      broadcastState()
+      if (ch.gameState.phase !== 'result' && ch.gameState.phase !== 'lobby') {
+        console.warn(`⚠️ [CH ${ch.id} admin:next_round] 현재 단계(${ch.gameState.phase})에서는 진행할 수 없습니다.`)
+        if (callback) callback({ success: false, reason: '진행 불가 단계' })
+        return
+      }
+      ch.lastServerNextRoundTime = now
 
-      io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
-        roundNumber: gameState.roundNumber,
-        question: gameState.currentQuestion,
-        timeLimit: gameState.timeLimit,
-        votingDeadline: gameState.votingDeadline,
-      })
+      clearAllTimers(ch.id)
+      const alive = ch.gameState.players.filter((p) => p.status === 'alive' || p.isAlive === true)
+      if (alive.length <= 2) {
+        ch.gameState.phase = 'gameover'
+        ch.gameState.isGameOver = true
+        ch.gameState.soleWinnerId = alive.length === 1 ? alive[0].id : null
+        broadcastState(ch.id)
+        if (callback) callback({ success: false, reason: '생존자가 2명 이하이므로 게임이 종료되었습니다.' })
+        return
+      }
+
+      ch.gameState.roundNumber += 1
+      ch.gameState.votes = {}
+      ch.gameState.currentResult = null
+      if (data?.question) {
+        ch.gameState.currentQuestion = data.question
+      } else {
+        ch.gameState.currentQuestion = getNextServerQuestion(ch.id, ch.gameState.ruleMode)
+      }
+      const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
+      startServerVoting(ch.id, limit)
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
     }
   })
 
-  // 일시정지 및 재개
-  socket.on('admin:pause_game', () => {
-    gameState.isPaused = true
-    broadcastState()
-  })
-
-  socket.on('admin:resume_game', () => {
-    gameState.isPaused = false
-    if (gameState.phase === 'voting' && gameState.timeLeft > 0) {
-      gameState.votingDeadline = Date.now() + gameState.timeLeft * 1000
+  const handlePause = (data) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    clearAllTimers(ch.id)
+    ch.gameState.isPaused = true
+    if (ch.gameState.phase === 'voting' && ch.gameState.votingDeadline) {
+      ch.gameState.timeLeft = Math.max(0, Math.ceil((ch.gameState.votingDeadline - Date.now()) / 1000))
     }
-    broadcastState()
-  })
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:paused', { timeLeft: ch.gameState.timeLeft, channelId: ch.id })
+    if (ch.id === '1') io.to(SOCKET_ROOM_MAIN).emit('game:paused', { timeLeft: ch.gameState.timeLeft, channelId: ch.id })
+    console.log(`⏸️ [CH ${ch.id} PAUSED] 일시정지 (남은: ${ch.gameState.timeLeft}초)`)
+  }
 
-  // 관리자 대기실 복귀 및 게임 리셋 (3번 서바이벌 퀴즈 규격)
-  socket.on('admin:reset_game', (callback) => {
-    gameState.phase = 'lobby'
-    gameState.roundNumber = 0
-    gameState.currentQuestion = null
-    gameState.currentResult = null
-    gameState.isGameOver = false
-    gameState.soleWinnerId = null
-    gameState.isPaused = false
-    gameState.votes = {}
-    gameState.players.forEach((p) => {
+  const handleResume = (data) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    ch.gameState.isPaused = false
+    if (ch.gameState.phase === 'voting' && ch.gameState.timeLeft > 0) {
+      ch.gameState.votingDeadline = Date.now() + ch.gameState.timeLeft * 1000
+      startServerVoting(ch.id, ch.gameState.timeLeft)
+    } else {
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      const payload = { timeLeft: ch.gameState.timeLeft, votingDeadline: ch.gameState.votingDeadline, channelId: ch.id }
+      io.to(room).emit('game:resumed', payload)
+      if (ch.id === '1') io.to(SOCKET_ROOM_MAIN).emit('game:resumed', payload)
+      if (ch.gameState.phase === 'result') {
+        scheduleServerResultTransition(ch.id)
+      }
+    }
+    console.log(`▶️ [CH ${ch.id} RESUMED] 게임 재개 (남은: ${ch.gameState.timeLeft}초)`)
+  }
+
+  socket.on('admin:pause_game', handlePause)
+  socket.on('admin:pause', handlePause)
+  socket.on('admin:resume_game', handleResume)
+  socket.on('admin:resume', handleResume)
+
+  socket.on('admin:reset_game', (data, callback) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    clearAllTimers(ch.id)
+    ch.gameState.phase = 'lobby'
+    ch.gameState.roundNumber = 0
+    ch.gameState.currentQuestion = null
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.isPaused = false
+    ch.gameState.votes = {}
+    ch.gameState.players.forEach((p) => {
       p.status = 'alive'
       p.isAlive = true
       p.eliminatedRound = undefined
     })
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
-    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
-    if (callback) callback({ success: true, count: gameState.players.length })
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:force_lobby', { channelId: ch.id })
+    io.to(room).emit('game:set_reset', { channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
+    }
+    if (callback) callback({ success: true, count: ch.gameState.players.length })
   })
 
-  socket.on('admin:reset_game_keep_players', (callback) => {
-    gameState.phase = 'lobby'
-    gameState.roundNumber = 0
-    gameState.currentQuestion = null
-    gameState.currentResult = null
-    gameState.isGameOver = false
-    gameState.soleWinnerId = null
-    gameState.isPaused = false
-    gameState.votes = {}
-    gameState.players.forEach((p) => {
+  socket.on('admin:reset_game_keep_players', (data, callback) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    clearAllTimers(ch.id)
+    ch.gameState.phase = 'lobby'
+    ch.gameState.roundNumber = 0
+    ch.gameState.currentQuestion = null
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.isPaused = false
+    ch.gameState.votes = {}
+    ch.gameState.players.forEach((p) => {
       p.status = 'alive'
       p.isAlive = true
       p.eliminatedRound = undefined
     })
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
-    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
-    if (callback) callback({ success: true, count: gameState.players.length })
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:force_lobby', { channelId: ch.id })
+    io.to(room).emit('game:set_reset', { channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
+    }
+    if (callback) callback({ success: true, count: ch.gameState.players.length })
   })
 
-  socket.on('admin:move_to_lobby', (callback) => {
-    gameState.phase = 'lobby'
-    gameState.roundNumber = 0
-    gameState.currentQuestion = null
-    gameState.currentResult = null
-    gameState.isGameOver = false
-    gameState.soleWinnerId = null
-    gameState.isPaused = false
-    gameState.votes = {}
-    gameState.players.forEach((p) => {
+  socket.on('admin:move_to_lobby', (data, callback) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    clearAllTimers(ch.id)
+    ch.gameState.phase = 'lobby'
+    ch.gameState.roundNumber = 0
+    ch.gameState.currentQuestion = null
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.isPaused = false
+    ch.gameState.votes = {}
+    ch.gameState.players.forEach((p) => {
       p.status = 'alive'
       p.isAlive = true
       p.eliminatedRound = undefined
     })
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
-    io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:force_lobby', { channelId: ch.id })
+    io.to(room).emit('game:set_reset', { channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
+    }
     if (callback) callback({ success: true })
   })
 
-  socket.on('admin:clear_all_players', (callback) => {
-    gameState.phase = 'lobby'
-    gameState.roundNumber = 0
-    gameState.currentQuestion = null
-    gameState.currentResult = null
-    gameState.isGameOver = false
-    gameState.soleWinnerId = null
-    gameState.players = []
-    gameState.votes = {}
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
-    io.to(SOCKET_ROOM_MAIN).emit('game:reset')
+  socket.on('admin:clear_all_players', (data, callback) => {
+    const chId = getEventChannelId(data)
+    const ch = getChannel(chId)
+    ch.gameState.phase = 'lobby'
+    ch.gameState.roundNumber = 0
+    ch.gameState.currentQuestion = null
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.players = []
+    ch.gameState.votes = {}
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:player_kicked_all', { channelId: ch.id })
+    io.to(room).emit('game:reset', { channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all', { channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:reset', { channelId: ch.id })
+    }
     if (callback) callback({ success: true })
   })
 
   // 클라이언트 전체 동기화 수신 (admin:sync)
   socket.on('admin:sync', (updates) => {
     try {
-      applyAdminSync(updates)
+      const chId = getEventChannelId(updates)
+      applyAdminSync(updates, chId)
     } catch (e) {
       console.error('[admin:sync Error]', e)
     }
@@ -495,13 +933,15 @@ io.on('connection', (socket) => {
   // 관리자 더미 참가자 추가
   socket.on('admin:add_mock_players', (data, callback) => {
     try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
       const incoming = Array.isArray(data?.newPlayers) ? data.newPlayers : []
       if (incoming.length > 0) {
         incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
-        gameState.players.push(...incoming)
+        ch.gameState.players.push(...incoming)
       } else {
-        const count = Math.min(100, Math.max(1, Number(data?.count) || 10))
-        const existing = gameState.players.length
+        const count = Math.min(300, Math.max(1, Number(data?.count) || 10))
+        const existing = ch.gameState.players.length
         const mockNames = [
           '기획팀_김철수', '개발팀_이영희', '디자인_박민수', '마케팅_최지우', '인사팀_정우성',
           '영업1팀_강동원', '재무팀_한지민', '품질관리_송중기', '보안팀_전지현', '총무팀_유재석',
@@ -511,7 +951,7 @@ io.on('connection', (socket) => {
         const newDummies = []
         for (let i = 0; i < count; i++) {
           const idx = existing + i
-          const nickname = idx < mockNames.length ? mockNames[idx] : `더미참가자_${idx + 1}`
+          const nickname = idx < mockNames.length ? mockNames[idx] : `참가자${idx + 1}`
           newDummies.push({
             id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
             nickname,
@@ -521,44 +961,81 @@ io.on('connection', (socket) => {
             isDummy: true,
           })
         }
-        gameState.players.push(...newDummies)
+        ch.gameState.players.push(...newDummies)
       }
 
-      broadcastState()
-      if (callback) callback({ success: true, total: gameState.players.length })
+      broadcastState(ch.id)
+      if (callback) callback({ success: true, total: ch.gameState.players.length, channelId: ch.id })
     } catch (e) {
       if (callback) callback({ success: false, error: e.message })
     }
   })
 
-  // 실시간 사내 응원 채팅 (chat:send)
-  socket.on('chat:send', (data) => {
+  // 실시간 사내 응원 채팅 (해당 채널 룸으로만 격리 전송)
+  const handleIncomingChatMessage = (data) => {
     try {
-      const { nickname, message } = data || {}
-      if (nickname && message) {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const text = ((data?.text || data?.message || '') + '').trim()
+      const nickname = ((data?.nickname || '익명') + '').trim()
+      const targetRoom = getChannelRoom(ch.id)
+
+      if (text) {
         const msg = {
-          id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-          nickname,
-          message,
-          timestamp: Date.now(),
+          id: data?.id || ('msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+          playerId: data?.playerId || socket.id,
+          nickname: nickname || '참가자',
+          text,
+          message: text,
+          timestamp: data?.timestamp || Date.now(),
+          isNotice: Boolean(data?.isNotice),
+          channelId: ch.id,
+          roomId: targetRoom,
         }
-        gameState.chatMessages.push(msg)
-        if (gameState.chatMessages.length > 50) gameState.chatMessages.shift()
-        io.to(SOCKET_ROOM_MAIN).emit('chat:received', msg)
-        io.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+        ch.gameState.chatMessages.push(msg)
+        if (ch.gameState.chatMessages.length > 50) ch.gameState.chatMessages.shift()
+
+        io.to(targetRoom).emit('chat:message', msg)
+        if (ch.id === '1') {
+          io.to(SOCKET_ROOM_MAIN).emit('chat:message', msg)
+        }
       }
     } catch (e) {
-      console.error('[chat:send Error]', e)
+      console.error('[chat error]', e)
+    }
+  }
+
+  socket.on('chat:message', handleIncomingChatMessage)
+  socket.on('chat:send', handleIncomingChatMessage)
+
+  socket.on('admin:action', (data) => {
+    const chId = getEventChannelId(data)
+    io.to(getChannelRoom(chId)).emit('game:update', data)
+  })
+
+  // 관리자 TV BGM 마스터 볼륨 설정
+  socket.on('admin:set_volume', (data) => {
+    try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const vol = typeof data?.volume === 'number' ? Math.max(0, Math.min(1, data.volume)) : 0.6
+      ch.gameState.bgmVolume = vol
+      const room = getChannelRoom(ch.id)
+      io.to(room).emit('game:volume_changed', { volume: vol, channelId: ch.id })
+      if (ch.id === '1') io.to(SOCKET_ROOM_MAIN).emit('game:volume_changed', { volume: vol, channelId: ch.id })
+      console.log(`🔊 [CH ${ch.id} BGM] Volume: ${Math.round(vol * 100)}%`)
+    } catch (e) {
+      console.error('[admin:set_volume Error]', e)
     }
   })
 
-  // 관리자 외부 접속 URL 수동 설정 (admin:update_server_url)
   socket.on('admin:update_server_url', (newUrl) => {
     try {
       if (newUrl && typeof newUrl === 'string') {
         publicTunnelUrl = newUrl.trim()
-        gameState.serverHostUrl = publicTunnelUrl
-        io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
+        for (const ch of channels.values()) {
+          ch.gameState.serverHostUrl = publicTunnelUrl
+        }
         io.emit('server:tunnel_updated', publicTunnelUrl)
         console.log(`[Admin] Server external URL updated to: ${publicTunnelUrl}`)
       }
@@ -567,19 +1044,33 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 관리자 대기실 QR 모드 변경 요청 (admin:change_qr_mode)
-  socket.on('admin:change_qr_mode', (data, callback) => {
+  // 관리자 대기실 QR 모드 변경 요청
+  const handleQrModeChange = (data, callback) => {
     try {
-      const mode = data?.mode === 'EXTERNAL' || data?.mode === 'tunnel' ? 'tunnel' : 'wifi'
-      gameState.qrMode = mode
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode })
-      io.emit('game:qr_mode_changed', { mode })
-      if (callback) callback({ success: true, mode })
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const rawMode = data?.mode || data?.qrMode || data
+      const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' ? 'tunnel' : 'wifi'
+      ch.gameState.qrMode = mode
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      io.to(room).emit('game:qr_mode_changed', { mode, channelId: ch.id })
+      io.to(room).emit('qr:change', { mode, channelId: ch.id })
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode, channelId: ch.id })
+        io.to(SOCKET_ROOM_MAIN).emit('qr:change', { mode, channelId: ch.id })
+      }
+      console.log(`📡 [CH ${ch.id} QR MODE] -> ${mode}`)
+      if (callback) callback({ success: true, mode, channelId: ch.id })
     } catch (err) {
       if (callback) callback({ success: false, mode: 'wifi' })
     }
-  })
+  }
+
+  socket.on('admin:change_qr_mode', handleQrModeChange)
+  socket.on('admin:set-qr-mode', handleQrModeChange)
+  socket.on('admin:set_qr_mode', handleQrModeChange)
+  socket.on('qr:change', handleQrModeChange)
 })
 
 // 4. 로컬 IP 자동 감지 유틸리티
@@ -593,11 +1084,11 @@ function getLocalNetworkIp() {
         }
       }
     }
-  } catch {}
+  } catch { }
   return 'localhost'
 }
 
-// 5. REST API (웹소켓 차단 방화벽 및 모바일 폴링 대비)
+// 5. REST API (채널 쿼리/바디 매핑)
 app.get('/api/server-info', (req, res) => {
   res.json({
     localIp: getLocalNetworkIp(),
@@ -607,57 +1098,74 @@ app.get('/api/server-info', (req, res) => {
   })
 })
 
+const getReqChannelId = (req) => {
+  const ch = req.query?.channel || req.query?.channelId || req.query?.ch || req.body?.channelId || req.body?.channel || '1'
+  return String(ch).trim() || '1'
+}
+
 app.get('/api/state', (req, res) => {
-  res.json(gameState)
+  const chId = getReqChannelId(req)
+  res.json(getChannel(chId).gameState)
 })
 
 app.get('/api/game/state', (req, res) => {
-  res.json(gameState)
+  const chId = getReqChannelId(req)
+  res.json(getChannel(chId).gameState)
 })
 
 app.get('/api/players', (req, res) => {
-  res.json({ success: true, count: gameState.players.length, players: gameState.players })
+  const chId = getReqChannelId(req)
+  const ch = getChannel(chId)
+  res.json({ success: true, count: ch.gameState.players.length, players: ch.gameState.players, channelId: ch.id })
 })
 
 app.get('/api/game/players', (req, res) => {
-  res.json({ success: true, count: gameState.players.length, players: gameState.players })
+  const chId = getReqChannelId(req)
+  const ch = getChannel(chId)
+  res.json({ success: true, count: ch.gameState.players.length, players: ch.gameState.players, channelId: ch.id })
 })
 
 app.post('/api/game/start', (req, res) => {
   try {
     const data = req.body || {}
-    gameState.roundNumber = 1
-    gameState.votes = {}
-    gameState.currentResult = null
-    gameState.isGameOver = false
-    gameState.soleWinnerId = null
-    gameState.isPaused = false
-    gameState.players.forEach((p) => {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
+    ch.gameState.roundNumber = 1
+    ch.gameState.votes = {}
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.isPaused = false
+    ch.gameState.players.forEach((p) => {
       p.status = 'alive'
       p.isAlive = true
       p.eliminatedRound = undefined
     })
-    if (data.question) gameState.currentQuestion = data.question
-    if (data.ruleMode) gameState.ruleMode = data.ruleMode
-    const limit = Number(data.timeLimit) || gameState.timeLimit || 15
-    gameState.timeLimit = limit
+    if (data.question) ch.gameState.currentQuestion = data.question
+    if (data.ruleMode) ch.gameState.ruleMode = data.ruleMode
+    const limit = Number(data.timeLimit) || ch.gameState.timeLimit || 15
+    ch.gameState.timeLimit = limit
     if (data.autoStartVoting !== false) {
-      gameState.phase = 'voting'
-      gameState.votingDeadline = Date.now() + limit * 1000
-      gameState.timeLeft = limit
+      ch.gameState.phase = 'voting'
+      ch.gameState.votingDeadline = Date.now() + limit * 1000
+      ch.gameState.timeLeft = limit
     } else {
-      gameState.phase = 'question'
-      gameState.votingDeadline = null
-      gameState.timeLeft = limit
+      ch.gameState.phase = 'question'
+      ch.gameState.votingDeadline = null
+      ch.gameState.timeLeft = limit
     }
-    broadcastState()
-    io.to(SOCKET_ROOM_MAIN).emit('game:round_started', {
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    const payload = {
+      channelId: ch.id,
       roundNumber: 1,
-      question: gameState.currentQuestion,
-      timeLimit: gameState.timeLimit,
-      votingDeadline: gameState.votingDeadline,
-    })
-    res.json({ success: true, state: gameState })
+      question: ch.gameState.currentQuestion,
+      timeLimit: ch.gameState.timeLimit,
+      votingDeadline: ch.gameState.votingDeadline,
+    }
+    io.to(room).emit('game:round_started', payload)
+    if (ch.id === '1') io.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
+    res.json({ success: true, state: ch.gameState, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
@@ -665,8 +1173,9 @@ app.post('/api/game/start', (req, res) => {
 
 app.post('/api/game/sync', (req, res) => {
   try {
-    applyAdminSync(req.body)
-    res.json({ success: true, state: gameState })
+    const chId = getReqChannelId(req)
+    applyAdminSync(req.body, chId)
+    res.json({ success: true, state: getChannel(chId).gameState, channelId: chId })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
@@ -674,361 +1183,241 @@ app.post('/api/game/sync', (req, res) => {
 
 app.post('/api/admin/sync', (req, res) => {
   try {
-    applyAdminSync(req.body)
-    res.json({ success: true, state: gameState })
+    const chId = getReqChannelId(req)
+    applyAdminSync(req.body, chId)
+    res.json({ success: true, state: getChannel(chId).gameState, channelId: chId })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
 })
 
-app.post('/api/vote', (req, res) => {
+const handleHttpVote = (req, res) => {
   try {
     const { playerId, choice } = req.body || {}
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
     if (!playerId || (choice !== 'A' && choice !== 'B')) {
       return res.status(400).json({ success: false, error: '잘못된 투표 요청입니다.' })
     }
-    const player = gameState.players.find((p) => p.id === playerId)
+    const player = ch.gameState.players.find((p) => p.id === playerId)
     if (player && (player.status === 'eliminated' || player.isAlive === false)) {
       return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
     }
-    gameState.votes[playerId] = choice
-    broadcastState()
-    res.json({ success: true })
+    ch.gameState.votes[playerId] = choice
+    broadcastState(ch.id)
+    res.json({ success: true, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
-})
+}
+app.post('/api/vote', handleHttpVote)
+app.post('/api/game/vote', handleHttpVote)
 
-app.post('/api/join', (req, res) => {
+const handleHttpJoin = (req, res) => {
   try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
     const nickname = (req.body?.nickname || '').trim()
     const requestedId = req.body?.id
     if (!nickname) {
       return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
     }
-    let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+    let player = ch.gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
+    const isLobby = ch.gameState.phase === 'lobby'
     if (!player) {
       player = {
         id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
         nickname,
-        status: 'alive',
-        isAlive: true,
+        status: isLobby ? 'alive' : 'eliminated',
+        isAlive: isLobby,
         joinedAt: Date.now(),
       }
-      gameState.players.push(player)
-      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      ch.gameState.players.push(player)
+      console.log(`👤 [CH ${ch.id} HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${ch.gameState.players.length}명`)
     } else {
       if (requestedId) player.id = requestedId
       player.nickname = nickname
-      player.status = 'alive'
-      player.isAlive = true
-      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
+      if (isLobby) {
+        player.status = 'alive'
+        player.isAlive = true
+      }
+      console.log(`🔄 [CH ${ch.id} HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${ch.gameState.players.length}명`)
     }
-    broadcastState()
-    broadcastPlayerJoined(player)
-    res.json({ success: true, player, players: gameState.players })
+    broadcastState(ch.id)
+    broadcastPlayerJoined(player, ch.id)
+    res.json({ success: true, player, players: ch.gameState.players, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
-})
+}
+app.post('/api/join', handleHttpJoin)
+app.post('/api/game/join', handleHttpJoin)
 
-app.post('/api/game/leave', (req, res) => {
+const handleHttpLeave = (req, res) => {
   try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
     const { id } = req.body || {}
     if (id) {
-      const found = gameState.players.find((p) => p.id === id)
-      gameState.players = gameState.players.filter((p) => p.id !== id)
-      if (gameState.votes && gameState.votes[id]) {
-        delete gameState.votes[id]
+      const found = ch.gameState.players.find((p) => p.id === id)
+      ch.gameState.players = ch.gameState.players.filter((p) => p.id !== id)
+      if (ch.gameState.votes && ch.gameState.votes[id]) {
+        delete ch.gameState.votes[id]
       }
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
-      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-      io.emit('players:update', gameState.players)
-      console.log(`🚪 [HTTP LEAVE] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
-    }
-    res.json({ success: true })
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message })
-  }
-})
-app.post('/api/leave', (req, res) => {
-  try {
-    const { id } = req.body || {}
-    if (id) {
-      gameState.players = gameState.players.filter((p) => p.id !== id)
-      if (gameState.votes && gameState.votes[id]) {
-        delete gameState.votes[id]
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      io.to(room).emit('player:left', { id, channelId: ch.id })
+      io.to(room).emit('players:update', ch.gameState.players)
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('player:left', { id, channelId: ch.id })
+        io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
       }
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
-      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-      io.emit('players:update', gameState.players)
+      console.log(`🚪 [CH ${ch.id} HTTP LEAVE] ${found?.nickname || id} 퇴장`)
     }
-    res.json({ success: true })
+    res.json({ success: true, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
-})
-
-app.post('/api/game/vote', (req, res) => {
-  try {
-    const { playerId, choice } = req.body || {}
-    if (!playerId || (choice !== 'A' && choice !== 'B')) {
-      return res.status(400).json({ success: false, error: '잘못된 투표 요청입니다.' })
-    }
-    const player = gameState.players.find((p) => p.id === playerId)
-    if (player && (player.status === 'eliminated' || player.isAlive === false)) {
-      return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
-    }
-    gameState.votes[playerId] = choice
-    broadcastState()
-    res.json({ success: true })
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message })
-  }
-})
-
-app.post('/api/game/join', (req, res) => {
-  try {
-    const nickname = (req.body?.nickname || '').trim()
-    const requestedId = req.body?.id
-    if (!nickname) {
-      return res.status(400).json({ success: false, error: '닉네임을 입력해주세요.' })
-    }
-    let player = gameState.players.find((p) => (requestedId && p.id === requestedId) || p.nickname === nickname)
-    if (!player) {
-      player = {
-        id: requestedId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
-        nickname,
-        status: 'alive',
-        isAlive: true,
-        joinedAt: Date.now(),
-      }
-      gameState.players.push(player)
-      console.log(`👤 [HTTP JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
-    } else {
-      if (requestedId) player.id = requestedId
-      player.nickname = nickname
-      player.status = 'alive'
-      player.isAlive = true
-      console.log(`🔄 [HTTP RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${gameState.players.length}명`)
-    }
-    broadcastState()
-    broadcastPlayerJoined(player)
-    res.json({ success: true, player, players: gameState.players })
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message })
-  }
-})
-
-app.post('/api/game/leave', (req, res) => {
-  try {
-    const { id } = req.body || {}
-    if (id) {
-      const found = gameState.players.find((p) => p.id === id)
-      gameState.players = gameState.players.filter((p) => p.id !== id)
-      if (gameState.votes && gameState.votes[id]) {
-        delete gameState.votes[id]
-      }
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
-      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-      io.emit('players:update', gameState.players)
-      console.log(`🚪 [HTTP LEAVE] ${found?.nickname || id} 퇴장 (남은 인원: ${gameState.players.length}명)`)
-    }
-    res.json({ success: true })
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message })
-  }
-})
-app.post('/api/leave', (req, res) => {
-  try {
-    const { id } = req.body || {}
-    if (id) {
-      gameState.players = gameState.players.filter((p) => p.id !== id)
-      if (gameState.votes && gameState.votes[id]) {
-        delete gameState.votes[id]
-      }
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('player:left', { id })
-      io.to(SOCKET_ROOM_MAIN).emit('players:update', gameState.players)
-      io.emit('players:update', gameState.players)
-    }
-    res.json({ success: true })
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message })
-  }
-})
+}
+app.post('/api/leave', handleHttpLeave)
+app.post('/api/game/leave', handleHttpLeave)
 
 app.post('/api/game/reset', (req, res) => {
   try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
     const { keepPlayers } = req.body || {}
+    clearAllTimers(ch.id)
+    ch.gameState.phase = 'lobby'
+    ch.gameState.roundNumber = 0
+    ch.gameState.currentQuestion = null
+    ch.gameState.currentResult = null
+    ch.gameState.isGameOver = false
+    ch.gameState.soleWinnerId = null
+    ch.gameState.isPaused = false
+    ch.gameState.votes = {}
     if (keepPlayers) {
-      gameState.phase = 'lobby'
-      gameState.roundNumber = 0
-      gameState.currentQuestion = null
-      gameState.currentResult = null
-      gameState.isGameOver = false
-      gameState.soleWinnerId = null
-      gameState.isPaused = false
-      gameState.votes = {}
-      gameState.players.forEach((p) => {
+      ch.gameState.players.forEach((p) => {
         p.status = 'alive'
         p.isAlive = true
         p.eliminatedRound = undefined
       })
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby')
-      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset')
     } else {
-      gameState.phase = 'lobby'
-      gameState.roundNumber = 0
-      gameState.currentQuestion = null
-      gameState.currentResult = null
-      gameState.isGameOver = false
-      gameState.soleWinnerId = null
-      gameState.players = []
-      gameState.votes = {}
-      broadcastState()
-      io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all')
-      io.to(SOCKET_ROOM_MAIN).emit('game:reset')
+      ch.gameState.players = []
     }
-    res.json({ success: true })
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:force_lobby', { channelId: ch.id })
+    io.to(room).emit('game:set_reset', { channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
+    }
+    res.json({ success: true, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }
 })
 
-// SPA fallback 지원 (Express 5 호환)
+// 6. SPA 라우팅 폴백 (Express 5 path-to-regexp 완벽 호환)
 app.use((req, res, next) => {
-  if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path === '/healthz' || req.path === '/health') {
-    return next()
-  }
-  const indexPath = path.join(clientDistPath, 'index.html')
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath)
+  if (req.method !== 'GET') return next()
+  const indexHtml = path.join(clientDistPath, 'index.html')
+  if (fs.existsSync(indexHtml)) {
+    res.sendFile(indexHtml)
   } else {
-    next()
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Your Choice Game Server</title></head>
+        <body style="background:#0b1426;color:#e2c974;font-family:sans-serif;padding:40px;text-align:center;">
+          <h1>당신의 선택 (The Last Two) 게임 서버</h1>
+          <p>서버가 포트 ${port}에서 정상 실행 중입니다.</p>
+          <p>프론트엔드 빌드(npm run build) 후 새로고침하세요.</p>
+        </body>
+      </html>
+    `)
   }
 })
 
-// 6. 로컬 터널 매니저 (serveo.net 기반 - 로컬 개발 전용)
-let reconnectDelay = 5000
-
-let tunnelAttempts = 0
-
-function connectTunnel(targetPort) {
-  if (isProduction) return
-  if (isReconnectingTunnel) return
+// 7. 터널 및 포트 리스닝
+function startLocalTunnel() {
+  if (isProduction || sshProcess || isReconnectingTunnel) return
   isReconnectingTunnel = true
 
-  if (sshProcess) {
-    try {
-      sshProcess.kill('SIGKILL')
-    } catch {}
-    sshProcess = null
-  }
-
-  // 1차: localhost.run (LTE_5G_외부접속_터널실행.bat 호환), 2차: serveo.net 교차 시도
-  const useLocalhostRun = tunnelAttempts % 2 === 0
-  tunnelAttempts++
-
-  const hostTarget = useLocalhostRun ? 'nokey@localhost.run' : 'serveo.net'
-  console.log(`🔄 [로컬 터널 연결 시도 중...] (${hostTarget})`)
-
+  console.log(`🌐 [AUTO TUNNEL] 스마트폰 외부 접속 터널을 연결합니다...`)
   try {
-    const child = spawn('ssh', [
+    sshProcess = spawn('ssh', [
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'ServerAliveInterval=30',
-      '-o', 'ServerAliveCountMax=120',
-      '-o', 'TCPKeepAlive=yes',
-      '-o', 'ExitOnForwardFailure=yes',
-      '-R', `80:127.0.0.1:${targetPort}`,
-      hostTarget,
+      '-o', 'ServerAliveCountMax=3',
+      '-R', `80:localhost:${port}`,
+      'nokey@localhost.run'
     ])
-    sshProcess = child
 
-    const handleOutput = (data) => {
-      const text = data.toString()
-      // serveo, localhost.run (.lhr.life), pinggy 등 모든 터널 도메인 정규식 매칭
-      const match = text.match(/https:\/\/[a-zA-Z0-9-.]+\.(serveo\.net|serveousercontent\.com|lhr\.life|pinggy\.link|loca\.lt|ngrok-free\.app|ngrok\.io)/i)
-      if (match) {
-        reconnectDelay = 5000
-        const newUrl = match[0]
-        if (publicTunnelUrl !== newUrl) {
-          publicTunnelUrl = newUrl
-          console.log(`=======================================================`)
-          console.log(`🌍 [외부 공인 접속 주소 (LTE/5G) 정상 연결됨]:`)
-          console.log(`👉 ${publicTunnelUrl}`)
-          console.log(`=======================================================`)
-          try {
-            io.to(SOCKET_ROOM_MAIN).emit('server:tunnel_updated', publicTunnelUrl)
-            io.emit('server:tunnel_updated', publicTunnelUrl)
-          } catch {}
+    sshProcess.stdout.on('data', (data) => {
+      const output = data.toString()
+      const match = output.match(/https:\/\/[a-zA-Z0-9-]+\.lhr\.life/)
+      if (match && match[0]) {
+        const detectedUrl = match[0]
+        if (detectedUrl !== publicTunnelUrl) {
+          publicTunnelUrl = detectedUrl
+          for (const ch of channels.values()) {
+            ch.gameState.serverHostUrl = publicTunnelUrl
+          }
+          console.log(`✨ [TUNNEL SUCCESS] 외부 접속 주소 발급: ${publicTunnelUrl}`)
+          io.emit('server:tunnel_updated', publicTunnelUrl)
         }
       }
-    }
-
-    child.stdout.on('data', handleOutput)
-    child.stderr.on('data', handleOutput)
-
-    child.on('error', (err) => {
-      console.warn('⚠️ [터널 프로세스 오류]:', err.message)
-      scheduleTunnelReconnect(targetPort)
     })
 
-    child.on('close', (code) => {
-      scheduleTunnelReconnect(targetPort)
+    sshProcess.stderr.on('data', (data) => {
+      const output = data.toString()
+      const match = output.match(/https:\/\/[a-zA-Z0-9-]+\.lhr\.life/)
+      if (match && match[0]) {
+        const detectedUrl = match[0]
+        if (detectedUrl !== publicTunnelUrl) {
+          publicTunnelUrl = detectedUrl
+          for (const ch of channels.values()) {
+            ch.gameState.serverHostUrl = publicTunnelUrl
+          }
+          console.log(`✨ [TUNNEL SUCCESS] 외부 접속 주소 발급: ${publicTunnelUrl}`)
+          io.emit('server:tunnel_updated', publicTunnelUrl)
+        }
+      }
     })
 
-    setTimeout(() => {
+    sshProcess.on('close', () => {
+      sshProcess = null
       isReconnectingTunnel = false
-    }, 10000)
+      setTimeout(() => {
+        if (!sshProcess) startLocalTunnel()
+      }, 5000)
+    })
+
+    sshProcess.on('error', () => {
+      sshProcess = null
+      isReconnectingTunnel = false
+    })
   } catch (err) {
-    scheduleTunnelReconnect(targetPort)
+    sshProcess = null
+    isReconnectingTunnel = false
   }
 }
 
-function scheduleTunnelReconnect(targetPort) {
-  if (isProduction) return
-  sshProcess = null
-  isReconnectingTunnel = false
-  setTimeout(() => {
-    connectTunnel(targetPort)
-  }, reconnectDelay)
-  reconnectDelay = Math.min(30000, reconnectDelay + 5000)
-}
-
-if (!isProduction) {
-  setInterval(() => {
-    if (!sshProcess || sshProcess.killed) {
-      connectTunnel(Number(port))
-    }
-  }, 30000)
-}
-
-process.on('SIGINT', () => {
-  if (sshProcess) {
-    try { sshProcess.kill() } catch {}
-  }
-  process.exit(0)
-})
-
-httpServer.listen(Number(port), '0.0.0.0', () => {
+httpServer.listen(port, '0.0.0.0', () => {
   const localIp = getLocalNetworkIp()
-  console.log(`=======================================================`)
-  console.log(`🚀 [YOUR CHOICE - 당신의 선택 (3번 서바이벌 퀴즈 아키텍처 이식 가동)]`)
-  console.log(`🖥️ 대형 TV 화면:    http://localhost:${port}/tv`)
-  console.log(`🛠️ 관리자 대시보드:  http://localhost:${port}/admin`)
-  console.log(`📱 스마트폰 (사내 Wi-Fi): http://${localIp}:${port}/`)
-  if (isProduction) {
-    console.log(`☁️ RENDER 클라우드 프로덕션 배포 모드 가동`)
-    if (publicTunnelUrl) {
-      console.log(`👉 서비스 공인 URL: ${publicTunnelUrl}`)
-    }
-  } else {
-    connectTunnel(Number(port))
+  console.log('====================================================')
+  console.log(`🎮 [YOUR CHOICE] 서바이벌 퀴즈 5개 채널 서버 가동 완료`)
+  console.log(`📡 포트: ${port}`)
+  console.log(`📶 사내 Wi-Fi: http://${localIp}:${port}`)
+  if (publicTunnelUrl) {
+    console.log(`🌍 외부 URL: ${publicTunnelUrl}`)
   }
-  console.log(`=======================================================`)
+  console.log(`📺 채널: 1채널 ~ 5채널 완전 독립 운영 지원`)
+  console.log('====================================================')
+
+  if (!isProduction && !publicTunnelUrl) {
+    startLocalTunnel()
+  }
 })

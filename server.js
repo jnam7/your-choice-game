@@ -1319,8 +1319,9 @@ app.post('/api/game/reset', (req, res) => {
   }
 })
 
-// 6. SPA 라우팅 폴백
-app.get('*', (req, res) => {
+// 6. SPA 라우팅 폴백 (Express 5 path-to-regexp 완벽 호환)
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next()
   const indexHtml = path.join(clientDistPath, 'index.html')
   if (fs.existsSync(indexHtml)) {
     res.sendFile(indexHtml)

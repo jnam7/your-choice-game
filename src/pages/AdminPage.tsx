@@ -504,6 +504,41 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {/* 상단 전용 채널 선택 배너 바 */}
+      <div className="bg-navy-dark/95 border-b border-gold/30 px-6 py-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-2">
+          <span className="text-gold font-bold text-sm">📍 현재 관리 채널:</span>
+          <span className="px-3 py-1 bg-gold text-navy-dark font-extrabold rounded-lg text-sm shadow">
+            {channelId}채널 (CH {channelId})
+          </span>
+          <span className="text-xs text-gray-400">
+            (현재 채널 접속자 {playerList.length}명 독립 제어 중)
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gold/80">다른 채널로 전환:</span>
+          <div className="flex bg-navy rounded-lg p-1 border border-gold/40 shadow gap-1">
+            {AVAILABLE_CHANNELS.map((ch) => {
+              const isCurrent = channelId === ch
+              return (
+                <button
+                  key={ch}
+                  onClick={() => handleChannelSwitch(ch)}
+                  className={`px-3 py-1.5 rounded text-xs md:text-sm font-bold transition-all ${
+                    isCurrent
+                      ? 'bg-gold text-navy-dark shadow font-extrabold scale-105 ring-2 ring-gold/40'
+                      : 'text-gray-300 hover:text-white hover:bg-gold/15'
+                  }`}
+                  title={`${ch}채널로 전환하여 독립 제어`}
+                >
+                  {ch}채널
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
       {activeTab === 'control' ? (
         <main className="p-4 md:p-6 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* ===== 좌측 2열: 메인 게임 컨트롤 ===== */}
