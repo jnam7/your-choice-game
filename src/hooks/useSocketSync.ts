@@ -7,7 +7,9 @@ import type { Player } from '../types/game'
 export function useSocketSync() {
   const store = useGameStore()
   const { syncWithServer, setServerHostUrl, channelId: storeChannelId } = store
-  const effectiveChannelId = storeChannelId || getChannelIdFromUrl()
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const hasUrlChannel = searchParams && (searchParams.has('channel') || searchParams.has('ch') || searchParams.has('room'))
+  const effectiveChannelId = hasUrlChannel ? getChannelIdFromUrl() : (storeChannelId || '1')
   const lastSyncHashRef = useRef<string>('')
 
   useEffect(() => {
@@ -218,6 +220,8 @@ export function useSocketSync() {
     }
 
     socket.on('connect', handleConnect)
+    socket.on('sync', handleStateSync)
+    socket.on('game:sync', handleStateSync)
     socket.on('chat:message', handleIncomingChatMessage)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
@@ -252,6 +256,8 @@ export function useSocketSync() {
     return () => {
       clearInterval(pollInterval)
       socket.off('connect', handleConnect)
+      socket.off('sync', handleStateSync)
+      socket.off('game:sync', handleStateSync)
       socket.off('chat:message', handleIncomingChatMessage)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)

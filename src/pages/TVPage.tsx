@@ -7,7 +7,8 @@ import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
 import { getChannelIdFromUrl, buildChannelUrl, AVAILABLE_CHANNELS } from '../utils/channel'
-import type { Player, ChatMessage } from '../types/game'
+import { ErrorBoundary } from '../components/ErrorBoundary'
+import type { Player, ChatMessage, GamePhase } from '../types/game'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -473,8 +474,23 @@ function TVLobby() {
 
 // ===== 2. TV 문제 출제 화면 =====
 function TVQuestion() {
-  const { currentQuestion, roundNumber, isFinals, ruleMode } = useGameStore()
-  if (!currentQuestion) return null
+  const currentQuestion = useGameStore((s) => s?.currentQuestion)
+  const roundNumber = useGameStore((s) => s?.roundNumber) || 1
+  const isFinals = useGameStore((s) => Boolean(s?.isFinals))
+  const ruleMode = useGameStore((s) => s?.ruleMode) || 'majority'
+
+  if (!currentQuestion) {
+    return (
+      <div className="w-full flex-1 flex flex-col justify-between relative pb-8">
+        <div className="particles-bg" />
+        <TVHeader roundNumber={roundNumber} category="질문 준비 중" isFinals={isFinals} />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto">
+          <div className="text-5xl animate-bounce mb-3">❓</div>
+          <h2 className="font-display text-2xl text-gold">문제를 준비하는 중입니다...</h2>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="w-full flex-1 flex flex-col justify-between relative pb-8">
@@ -615,7 +631,18 @@ function TVVoting() {
     }
   }, [timeLeft])
 
-  if (!currentQuestion) return null
+  if (!currentQuestion) {
+    return (
+      <div className="w-full flex-1 flex flex-col justify-between relative pb-8">
+        <div className="particles-bg" />
+        <TVHeader roundNumber={roundNumber || 1} category="투표 준비 중" isFinals={isFinals} />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto">
+          <div className="text-5xl animate-bounce mb-3">⏱️</div>
+          <h2 className="font-display text-2xl text-gold">투표를 준비하는 중입니다...</h2>
+        </div>
+      </div>
+    )
+  }
 
   const isUrgent = timeLeft <= 5
 
@@ -789,7 +816,18 @@ function TVResult() {
     }
   }, [showBars])
 
-  if (!currentResult) return null
+  if (!currentResult || !currentResult.question) {
+    return (
+      <div className="w-full flex-1 flex flex-col justify-between relative pb-8">
+        <div className="particles-bg" />
+        <TVHeader roundNumber={roundNumber || 1} category="결과 집계 중" />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto">
+          <div className="text-5xl animate-bounce mb-3">📊</div>
+          <h2 className="font-display text-2xl text-gold">결과를 계산하는 중입니다...</h2>
+        </div>
+      </div>
+    )
+  }
 
   const totalVoters = currentResult.votesA + currentResult.votesB
   const pctA = totalVoters > 0 ? Math.round((currentResult.votesA / totalVoters) * 100) : 0
@@ -1213,7 +1251,15 @@ export default function TVPage() {
   // 실시간 웹소켓 상태 동기화 (3번 서바이벌 퀴즈 동일)
   useSocketSync()
 
+  const urlChannel = getChannelIdFromUrl()
+  useEffect(() => {
+    if (urlChannel && urlChannel !== useGameStore.getState().channelId) {
+      useGameStore.getState().setChannelId(urlChannel)
+    }
+  }, [urlChannel])
+
   const phase = useGameStore((s) => s.phase)
+  const currentPhase: GamePhase = phase || 'lobby'
   const isPaused = useGameStore((s) => s.isPaused)
   const timeLeft = useGameStore((s) => s.timeLeft)
   const players = useGameStore((s) => s.players)
@@ -1445,63 +1491,70 @@ export default function TVPage() {
   }, [setServerHostUrl, qrMode, serverHostUrl])
 
   return (
-    <div className="w-screen h-screen flex flex-row overflow-hidden bg-slate-950 text-white select-none">
-      <div className="scanline-overlay pointer-events-none" />
+    <ErrorBoundary>
+      <div className="w-screen h-screen flex flex-row overflow-hidden bg-slate-950 text-white select-none">
+        <div className="scanline-overlay pointer-events-none" />
 
-      {/* ① 좌측 영역 (w-[78%] flex-[78]) - 메인 게임 디스플레이 */}
-      <div className="w-[78%] flex-[78] h-full flex flex-col relative overflow-y-auto overflow-x-hidden bg-navy">
-        {/* 로비 페이즈일 때 우측 상단 툴바 (라운드가 없으므로 헤더 대신 배치) */}
-        {phase === 'lobby' && (
-          <div className="absolute top-5 right-5 z-50 flex items-center gap-3">
-            <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
-              <span>👥 접속</span>
-              <span className="font-mono text-white">{playerList.length}명</span>
+        {/* ① 좌측 영역 (w-[78%] flex-[78]) - 메인 게임 디스플레이 */}
+        <div className="w-[78%] flex-[78] h-full flex flex-col relative overflow-y-auto overflow-x-hidden bg-navy">
+          {/* 로비 페이즈일 때 우측 상단 툴바 (라운드가 없으므로 헤더 대신 배치) */}
+          {currentPhase === 'lobby' && (
+            <div className="absolute top-5 right-5 z-50 flex items-center gap-3">
+              <div className="px-3 py-1.5 bg-navy-dark/80 border border-gold/30 rounded-xl text-xs font-bold text-gold flex items-center gap-1.5 shadow-xl backdrop-blur">
+                <span>👥 접속</span>
+                <span className="font-mono text-white">{playerList.length}명</span>
+              </div>
+              <AdminGearButton />
+              <FullscreenButton />
             </div>
-            <AdminGearButton />
-            <FullscreenButton />
-          </div>
-        )}
+          )}
 
-        <div className="flex-1 w-full flex flex-col justify-between relative">
-          <AnimatePresence mode="wait">
-            {phase === 'lobby' && (
-              <motion.div key="lobby" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVLobby />
-              </motion.div>
-            )}
-            {phase === 'question' && (
-              <motion.div key="question" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVQuestion />
-              </motion.div>
-            )}
-            {phase === 'voting' && (
-              <motion.div key="voting" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVVoting />
-              </motion.div>
-            )}
-            {phase === 'revealing' && (
-              <motion.div key="revealing" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVRevealing />
-              </motion.div>
-            )}
-            {(phase === 'result' || phase === 'elimination') && (
-              <motion.div key="result" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVResult />
-              </motion.div>
-            )}
-            {phase === 'gameover' && (
-              <motion.div key="gameover" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <TVGameOver />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="flex-1 w-full flex flex-col justify-between relative">
+            <AnimatePresence mode="wait">
+              {currentPhase === 'lobby' && (
+                <motion.div key="lobby" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVLobby />
+                </motion.div>
+              )}
+              {currentPhase === 'question' && (
+                <motion.div key="question" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVQuestion />
+                </motion.div>
+              )}
+              {currentPhase === 'voting' && (
+                <motion.div key="voting" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVVoting />
+                </motion.div>
+              )}
+              {currentPhase === 'revealing' && (
+                <motion.div key="revealing" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVRevealing />
+                </motion.div>
+              )}
+              {(currentPhase === 'result' || currentPhase === 'elimination') && (
+                <motion.div key="result" className="w-full flex-1 flex flex-col" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVResult />
+                </motion.div>
+              )}
+              {currentPhase === 'gameover' && (
+                <motion.div key="gameover" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVGameOver />
+                </motion.div>
+              )}
+              {!['lobby', 'question', 'voting', 'revealing', 'result', 'elimination', 'gameover'].includes(currentPhase) && (
+                <motion.div key="fallback-lobby" className="w-full flex-1 flex flex-col justify-center" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                  <TVLobby />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        {/* ② 우측 영역 (w-[22%] flex-[22]) - 실시간 응원톡 상시 고정 패널 */}
+        <div className="w-[22%] flex-[22] h-full">
+          <TVLiveChatSidebar />
         </div>
       </div>
-
-      {/* ② 우측 영역 (w-[22%] flex-[22]) - 실시간 응원톡 상시 고정 패널 */}
-      <div className="w-[22%] flex-[22] h-full">
-        <TVLiveChatSidebar />
-      </div>
-    </div>
+    </ErrorBoundary>
   )
 }

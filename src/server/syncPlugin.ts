@@ -467,8 +467,12 @@ export function syncPlugin(): Plugin {
         }
         socket.data.channelId = targetChannel
         const ch = getChannel(targetChannel)
+        // 방 생성 직후 완성된 초기 게임 상태를 담아 즉시 다중 이벤트 응답 (TV 화면 로딩 갇힘 원천 차단)
+        socket.emit('sync', ch.gameState)
+        socket.emit('game:sync', ch.gameState)
         socket.emit('game:state_sync', ch.gameState)
         socket.emit('state:sync', ch.gameState)
+        socket.emit('admin:sync', ch.gameState)
         if (callback) callback({ success: true, channelId: targetChannel, state: ch.gameState })
       })
 

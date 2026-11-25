@@ -419,11 +419,16 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gradient-to-br from-navy-dark via-navy to-navy-light text-white">
       {/* 관리자 헤더 */}
       <header className="border-b border-gold/15 bg-navy-dark/80 backdrop-blur px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40">
+        {/* 좌측: 로고만 깔끔하게 노출 (좌측 중복 채널 UI 완전 삭제) */}
         <div className="flex items-center gap-4">
           <Logo />
-          {/* 5개 채널 독립 운영 탭 */}
-          <div className="flex items-center bg-navy rounded-lg p-1 border border-gold/30 shadow-inner">
-            <span className="text-[10px] text-gold/70 font-bold px-1.5 hidden sm:inline">채널</span>
+        </div>
+
+        {/* 우측: 채널 전환 UI 단독 배치 및 제어 툴바 */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* 채널 변경 UI (우측 상단 단독 배치) */}
+          <div className="flex items-center bg-navy rounded-lg p-1 border border-gold/40 shadow-inner">
+            <span className="text-[11px] text-gold/80 font-bold px-2">채널</span>
             {AVAILABLE_CHANNELS.map((ch) => {
               const isCurrent = channelId === ch
               return (
@@ -435,15 +440,14 @@ export default function AdminPage() {
                       ? 'bg-gold text-navy-dark shadow font-extrabold scale-105'
                       : 'text-gray-400 hover:text-white hover:bg-gold/10'
                   }`}
+                  title={`${ch}채널로 전환하여 독립 제어`}
                 >
                   {ch}채널
                 </button>
               )
             })}
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
           <div className="flex bg-navy rounded-lg p-1 border border-gold/20">
             <button
               onClick={() => setActiveTab('control')}
@@ -477,10 +481,10 @@ export default function AdminPage() {
             rel="noopener noreferrer"
             onClick={(e) => {
               e.preventDefault()
-              window.open(`/tv?channel=${channelId}`, '_blank', 'noopener,noreferrer')
+              window.open('/tv?channel=' + channelId, '_blank', 'noopener,noreferrer')
             }}
             className="px-3 py-1.5 bg-navy-dark/90 hover:bg-gold hover:text-navy-dark text-gold/90 border border-gold/30 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow transition-all cursor-pointer"
-            title={`대형 TV 전광판 화면(/tv?channel=${channelId})을 새 탭/새 창에서 열기`}
+            title={`대형 TV 전광판 화면(/tv?channel=${channelId})을 새 탭에서 열기`}
           >
             🖥️ TV 화면 열기 (CH {channelId})
           </a>
@@ -503,41 +507,6 @@ export default function AdminPage() {
           </span>
         </div>
       </header>
-
-      {/* 상단 전용 채널 선택 배너 바 */}
-      <div className="bg-navy-dark/95 border-b border-gold/30 px-6 py-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-        <div className="flex items-center gap-2">
-          <span className="text-gold font-bold text-sm">📍 현재 관리 채널:</span>
-          <span className="px-3 py-1 bg-gold text-navy-dark font-extrabold rounded-lg text-sm shadow">
-            {channelId}채널 (CH {channelId})
-          </span>
-          <span className="text-xs text-gray-400">
-            (현재 채널 접속자 {playerList.length}명 독립 제어 중)
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-gold/80">다른 채널로 전환:</span>
-          <div className="flex bg-navy rounded-lg p-1 border border-gold/40 shadow gap-1">
-            {AVAILABLE_CHANNELS.map((ch) => {
-              const isCurrent = channelId === ch
-              return (
-                <button
-                  key={ch}
-                  onClick={() => handleChannelSwitch(ch)}
-                  className={`px-3 py-1.5 rounded text-xs md:text-sm font-bold transition-all ${
-                    isCurrent
-                      ? 'bg-gold text-navy-dark shadow font-extrabold scale-105 ring-2 ring-gold/40'
-                      : 'text-gray-300 hover:text-white hover:bg-gold/15'
-                  }`}
-                  title={`${ch}채널로 전환하여 독립 제어`}
-                >
-                  {ch}채널
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </div>
 
       {activeTab === 'control' ? (
         <main className="p-4 md:p-6 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-5">
