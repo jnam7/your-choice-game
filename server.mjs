@@ -562,8 +562,13 @@ io.on('connection', (socket) => {
         console.log(`🔄 [CH ${ch.id} PLAYER RE-JOIN] ${nickname} (ID: ${player.id}) - 현재 총 ${ch.gameState.players.length}명`)
       }
 
+      if (player) {
+        player.socketId = socket.id
+      }
       broadcastState(ch.id)
       broadcastPlayerJoined(player, ch.id)
+      socket.emit('sync', ch.gameState)
+      socket.emit('game:sync', ch.gameState)
       if (callback) callback({ success: true, player, players: ch.gameState.players, channelId: ch.id })
     } catch (e) {
       console.error('[player:join Error]', e)
@@ -935,7 +940,7 @@ io.on('connection', (socket) => {
   })
 
   // 관리자 더미 참가자 추가
-  socket.on('admin:add_mock_players', (data, callback) => {
+  const handleAddMockPlayers = (data, callback) => {
     try {
       const chId = getEventChannelId(data)
       const ch = getChannel(chId)
@@ -969,11 +974,23 @@ io.on('connection', (socket) => {
       }
 
       broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      io.to(room).emit('players:update', ch.gameState.players)
+      io.to(room).emit('sync', ch.gameState)
+      io.to(room).emit('game:sync', ch.gameState)
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+        io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+        io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      }
       if (callback) callback({ success: true, total: ch.gameState.players.length, channelId: ch.id })
     } catch (e) {
       if (callback) callback({ success: false, error: e.message })
     }
-  })
+  }
+
+  socket.on('admin:add_mock_players', handleAddMockPlayers)
+  socket.on('admin:add-mock-players', handleAddMockPlayers)
 
   // 실시간 사내 응원 채팅 (해당 채널 룸으로만 격리 전송)
   const handleIncomingChatMessage = (data) => {

@@ -113,7 +113,7 @@ export interface GameActions {
   addPlayer: (nickname: string, existingId?: string) => string
   setPlayers?: (players: Player[]) => void
   removePlayer: (id: string) => void
-  addMockPlayers: (count: number) => void
+  addMockPlayers: (count: number, targetChannelId?: string) => void
   changeNickname: (newNickname: string) => void
   
   // 게임 제어 흐름

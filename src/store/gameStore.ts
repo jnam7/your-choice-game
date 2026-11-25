@@ -486,7 +486,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       socket.emit('player:change_nickname', { channelId, id: currentPlayerId, newNickname: trimmed })
     },
 
-    addMockPlayers: (count: number) => {
+    addMockPlayers: (count: number, targetChannelId?: string) => {
+      const channelId = targetChannelId || get().channelId || '1'
       const existing = get().players.length
       const available = mockNicknames.slice(existing, existing + count)
       const extras: string[] = []
@@ -509,8 +510,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       persist()
 
       // 서버에 더미 참가자 즉시 등록 및 전파
-      const channelId = get().channelId || '1'
       socket.emit('admin:add_mock_players', { channelId, newPlayers, count })
+      socket.emit('admin:add-mock-players', { channelId, newPlayers, count })
     },
 
     // ===== 게임 제어 흐름 =====

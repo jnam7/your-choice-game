@@ -1100,6 +1100,9 @@ function WinnerScreen() {
 
 function clearLocalPlayerSession() {
   try {
+    const channelId = useGameStore.getState().channelId || getChannelIdFromUrl()
+    safeStorage.removeItem(`lasttwo_player_id_ch_${channelId}`)
+    safeStorage.removeItem(`lasttwo_player_nickname_ch_${channelId}`)
     safeStorage.removeItem('lasttwo_player_id')
     safeStorage.removeItem('lasttwo_player_nickname')
     safeStorage.removeItem('your_choice_game_state')
@@ -1115,6 +1118,9 @@ export default function PlayerPage() {
   // 실시간 웹소켓 상태 동기화 (3번 서바이벌 퀴즈 동일)
   useSocketSync()
 
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const currentChannelId = storeChannelId || getChannelIdFromUrl()
+
   // Zustand selector를 통한 실시간 반응성 보장 (phase 변경 시 즉각 리렌더링)
   const phase = useGameStore((s) => s.phase)
   const currentPlayerId = useGameStore((s) => s.currentPlayerId)
@@ -1127,8 +1133,8 @@ export default function PlayerPage() {
   // 게임 진행 중(문제 풀이/투표) 단계 여부: 오직 이 단계에서만 예외적으로 튕김 방지용 복원 허용
   const isPlayPhase = phase === 'question' || phase === 'voting'
 
-  const savedId = safeStorage.getItem('lasttwo_player_id')
-  const savedNickname = safeStorage.getItem('lasttwo_player_nickname')
+  const savedId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
+  const savedNickname = safeStorage.getItem(`lasttwo_player_nickname_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_nickname')
 
   // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
   // 대기실(lobby)이거나 게임 진행 중이 아닐 때는 무조건 false 및 로컬 세션 삭제!
@@ -1154,14 +1160,14 @@ export default function PlayerPage() {
   // 대기실(lobby) 상태 감지 시, 아직 참가 확정을 하지 않았다면 남아있는 로컬스토리지 강제 삭제
   useEffect(() => {
     if (phase === 'lobby') {
-      const sId = safeStorage.getItem('lasttwo_player_id')
+      const sId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
       if (sId && !hasConfirmedJoin) {
         clearLocalPlayerSession()
         clearCurrentPlayer()
         setMyPlayer(null)
       }
     }
-  }, [phase, hasConfirmedJoin, clearCurrentPlayer])
+  }, [phase, hasConfirmedJoin, clearCurrentPlayer, currentChannelId])
 
   // 실제 문제 풀이/투표 중(isPlayPhase)일 때만 저장된 정보 복구
   useEffect(() => {
@@ -1176,18 +1182,18 @@ export default function PlayerPage() {
 
   // 퇴장 처리 함수: 로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
   const handleExitGame = () => {
-    const idToLeave = myPlayer?.id || currentPlayerId || safeStorage.getItem('lasttwo_player_id')
+    const idToLeave = myPlayer?.id || currentPlayerId || safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
     if (idToLeave) {
-      socket.emit('player:leave', { id: idToLeave })
-      fetch('/api/game/leave', {
+      socket.emit('player:leave', { channelId: currentChannelId, id: idToLeave })
+      fetch(`/api/game/leave?channel=${currentChannelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: idToLeave }),
+        body: JSON.stringify({ channelId: currentChannelId, id: idToLeave }),
       }).catch(() => {})
-      fetch('/api/leave', {
+      fetch(`/api/leave?channel=${currentChannelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: idToLeave }),
+        body: JSON.stringify({ channelId: currentChannelId, id: idToLeave }),
       }).catch(() => {})
       removePlayer(idToLeave)
     }
@@ -1202,21 +1208,21 @@ export default function PlayerPage() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (phase === 'lobby') {
-        const id = myPlayer?.id || safeStorage.getItem('lasttwo_player_id')
+        const id = myPlayer?.id || safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
         if (id) {
-          socket.emit('player:leave', { id })
-          const blob = new Blob([JSON.stringify({ id })], { type: 'application/json' })
-          navigator.sendBeacon('/api/game/leave', blob)
+          socket.emit('player:leave', { channelId: currentChannelId, id })
+          const blob = new Blob([JSON.stringify({ channelId: currentChannelId, id })], { type: 'application/json' })
+          navigator.sendBeacon(`/api/game/leave?channel=${currentChannelId}`, blob)
         }
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [phase, myPlayer?.id])
+  }, [phase, myPlayer?.id, currentChannelId])
 
   // 게임 세션 유효성 검사 및 리셋 감지
   useEffect(() => {
-    const sId = safeStorage.getItem('lasttwo_player_id')
+    const sId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
 
     // 1. 대기실(lobby)인 경우: 이전 라운드 투표/탈락 잔여 데이터 리셋
     if (phase === 'lobby') {
@@ -1240,7 +1246,7 @@ export default function PlayerPage() {
         return
       }
     }
-  }, [phase, isPlayPhase, players, myPlayer, clearCurrentPlayer])
+  }, [phase, isPlayPhase, players, myPlayer, clearCurrentPlayer, currentChannelId])
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
@@ -1299,14 +1305,17 @@ export default function PlayerPage() {
   }, [setCurrentPlayer, clearCurrentPlayer, isPlayPhase])
 
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
-  const foundInList = players.find((p) => p && p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? savedId : null)))
+  const currentChSavedId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
+  const currentChSavedNick = safeStorage.getItem(`lasttwo_player_nickname_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_nickname')
+
+  const foundInList = players.find((p) => p && p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? currentChSavedId : null)))
   const currentPlayer: Player | null =
     foundInList ||
     myPlayer ||
-    (isPlayPhase && savedId && savedNickname
+    (isPlayPhase && currentChSavedId && currentChSavedNick
       ? {
-          id: savedId,
-          nickname: savedNickname,
+          id: currentChSavedId,
+          nickname: currentChSavedNick,
           status: 'alive',
           joinedAt: Date.now(),
         }
@@ -1321,8 +1330,12 @@ export default function PlayerPage() {
             setMyPlayer(p)
             setCurrentPlayer(p.id)
             setHasConfirmedJoin(true)
-            safeStorage.setItem('lasttwo_player_id', p.id)
-            safeStorage.setItem('lasttwo_player_nickname', p.nickname)
+            safeStorage.setItem(`lasttwo_player_id_ch_${currentChannelId}`, p.id)
+            safeStorage.setItem(`lasttwo_player_nickname_ch_${currentChannelId}`, p.nickname)
+            if (currentChannelId === '1') {
+              safeStorage.setItem('lasttwo_player_id', p.id)
+              safeStorage.setItem('lasttwo_player_nickname', p.nickname)
+            }
           }}
         />
       </ErrorBoundary>
@@ -1389,9 +1402,6 @@ export default function PlayerPage() {
     // 6. 기본 폴백: 대기실이 아닌 경우 무조건 문제 선택지 화면으로 폴백하여 대기실 갇힘 원천 방지
     return <VoteScreen currentPlayer={currentPlayer} />
   }
-
-  const storeChannelId = useGameStore((s) => s.channelId)
-  const currentChannelId = storeChannelId || getChannelIdFromUrl()
 
   return (
     <ErrorBoundary>

@@ -118,12 +118,13 @@ export default function AdminPage() {
   useEffect(() => {
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
+      if (data.channelId && data.channelId !== channelId) return
       let list: Player[] = []
       if (Array.isArray(data)) list = data
       else if (data.players && Array.isArray(data.players)) list = data.players
       else if (data.player) list = [data.player]
 
-      if (list.length > 0) {
+      if (list.length > 0 || Array.isArray(data) || Array.isArray(data.players)) {
         const cur = useGameStore.getState().players
         const map = new Map<string, Player>()
         for (const p of cur) map.set(p.id, p)
@@ -141,7 +142,7 @@ export default function AdminPage() {
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
     }
-  }, [])
+  }, [channelId])
 
   const [activeTab, setActiveTab] = useState<'control' | 'questions'>('control')
   const [mockCount, setMockCount] = useState(20)
@@ -647,25 +648,25 @@ export default function AdminPage() {
                         />
                       </div>
                       <button
-                        onClick={() => addMockPlayers(mockCount)}
+                        onClick={() => addMockPlayers(mockCount, channelId)}
                         className="px-3 py-1.5 bg-navy border border-gold/40 rounded text-gold hover:bg-gold/10 text-xs font-bold transition-colors"
                       >
                         추가
                       </button>
                       <button
-                        onClick={() => addMockPlayers(10)}
+                        onClick={() => addMockPlayers(10, channelId)}
                         className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
                       >
                         +10명
                       </button>
                       <button
-                        onClick={() => addMockPlayers(50)}
+                        onClick={() => addMockPlayers(50, channelId)}
                         className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
                       >
                         +50명
                       </button>
                       <button
-                        onClick={() => addMockPlayers(100)}
+                        onClick={() => addMockPlayers(100, channelId)}
                         className="px-2.5 py-1.5 bg-navy border border-gold/30 rounded text-gray-200 hover:bg-gold/20 text-xs font-semibold transition-colors"
                       >
                         +100명
