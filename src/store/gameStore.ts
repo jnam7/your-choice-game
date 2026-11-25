@@ -1022,23 +1022,33 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     setCurrentPlayer: (id: string) => {
+      const channelId = get().channelId || '1'
       set({ currentPlayerId: id || null })
       if (typeof window !== 'undefined') {
         if (id) {
-          localStorage.setItem('lasttwo_player_id', id)
+          localStorage.setItem(`lasttwo_player_id_ch_${channelId}`, id)
+          if (channelId === '1') localStorage.setItem('lasttwo_player_id', id)
         } else {
-          localStorage.removeItem('lasttwo_player_id')
+          localStorage.removeItem(`lasttwo_player_id_ch_${channelId}`)
+          if (channelId === '1') localStorage.removeItem('lasttwo_player_id')
         }
       }
       persist()
     },
 
     clearCurrentPlayer: () => {
+      const channelId = get().channelId || '1'
       set({ currentPlayerId: null })
       if (typeof window !== 'undefined') {
         try {
-          localStorage.removeItem('lasttwo_player_id')
-          localStorage.removeItem('lasttwo_player_nickname')
+          localStorage.removeItem(`lasttwo_player_id_ch_${channelId}`)
+          localStorage.removeItem(`lasttwo_player_nickname_ch_${channelId}`)
+          if (channelId === '1') {
+            localStorage.removeItem('lasttwo_player_id')
+            localStorage.removeItem('lasttwo_player_nickname')
+          }
+          sessionStorage.removeItem(`lasttwo_player_id_ch_${channelId}`)
+          sessionStorage.removeItem(`lasttwo_player_nickname_ch_${channelId}`)
           sessionStorage.removeItem('lasttwo_player_id')
           sessionStorage.removeItem('lasttwo_player_nickname')
         } catch (e) { }
