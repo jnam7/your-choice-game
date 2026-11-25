@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { socket } from '../socket'
+import { getChannelIdFromUrl, getChannelRoomName } from '../utils/channel'
 import type { Player } from '../types/game'
 
 export function useSocketSync() {
   const store = useGameStore()
-  const { syncWithServer, setServerHostUrl } = store
+  const { syncWithServer, setServerHostUrl, channelId: storeChannelId } = store
+  const effectiveChannelId = storeChannelId || getChannelIdFromUrl()
   const lastSyncHashRef = useRef<string>('')
 
   useEffect(() => {
@@ -15,6 +17,10 @@ export function useSocketSync() {
 
     const applyState = (serverState: any) => {
       if (!serverState) return
+      // 다른 채널의 데이터인 경우 무시 (채널 ID가 명시되었는데 현재 채널과 다를 때)
+      if (serverState.channelId && serverState.channelId !== effectiveChannelId) {
+        return
+      }
 
       let calculatedTimeLeft = serverState.timeLeft
       if (serverState.phase === 'voting' && serverState.votingDeadline) {
@@ -22,7 +28,7 @@ export function useSocketSync() {
         calculatedTimeLeft = remainingSec
       }
 
-      const hash = `${serverState.phase}_${serverState.roundNumber}_${serverState.votingDeadline}_${Boolean(serverState.currentResult)}_${serverState.isPaused}_${serverState.currentQuestion?.id || ''}`
+      const hash = `${serverState.phase}_${serverState.roundNumber}_${serverState.votingDeadline}_${Boolean(serverState.currentResult)}_${serverState.isPaused}_${serverState.currentQuestion?.id || ''}_${serverState.channelId || ''}`
       if (lastSyncHashRef.current === hash && serverState.phase !== 'voting') {
         // 중복 동기화 방지
       } else {
@@ -35,24 +41,29 @@ export function useSocketSync() {
           ? (Object.values(serverState.players).filter(Boolean) as Player[])
           : (serverState.players === null ? [] : useGameStore.getState().players))
 
-      const mySavedId = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null
-      const mySavedNick = typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_nickname') : null
+      const mySavedId = typeof window !== 'undefined'
+        ? (localStorage.getItem(`lasttwo_player_id_ch_${effectiveChannelId}`) || (effectiveChannelId === '1' ? localStorage.getItem('lasttwo_player_id') : null))
+        : null
+      const mySavedNick = typeof window !== 'undefined'
+        ? (localStorage.getItem(`lasttwo_player_nickname_ch_${effectiveChannelId}`) || (effectiveChannelId === '1' ? localStorage.getItem('lasttwo_player_nickname') : null))
+        : null
 
       // 게임 진행 중(question 또는 voting)에만 튕김 방지용 자동 재등록 허용
       const isGamePlaying = serverState.phase === 'question' || serverState.phase === 'voting'
       if (isGamePlaying && mySavedId && mySavedNick) {
         const inServer = incomingPlayers.some((p) => p.id === mySavedId || p.nickname === mySavedNick)
         if (!inServer) {
-          socket.emit('player:join', { id: mySavedId, nickname: mySavedNick })
-          fetch('/api/game/join', {
+          socket.emit('player:join', { channelId: effectiveChannelId, id: mySavedId, nickname: mySavedNick })
+          fetch(`/api/game/join?channel=${effectiveChannelId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: mySavedId, nickname: mySavedNick }),
+            body: JSON.stringify({ channelId: effectiveChannelId, id: mySavedId, nickname: mySavedNick }),
           }).catch(() => {})
         }
       }
 
       syncWithServer({
+        channelId: serverState.channelId || effectiveChannelId,
         phase: serverState.phase,
         roundNumber: serverState.roundNumber,
         ruleMode: serverState.ruleMode || 'majority',
@@ -77,19 +88,22 @@ export function useSocketSync() {
     }
 
     const handleRoundStarted = (data: any) => {
-      if (data) {
-        syncWithServer({
-          phase: 'voting',
-          roundNumber: data.roundNumber || 1,
-          currentQuestion: data.question,
-          timeLimit: data.timeLimit || 15,
-          votingDeadline: data.votingDeadline,
-          timeLeft: data.timeLimit || 15,
-        })
-      }
+      if (!data) return
+      if (data.channelId && data.channelId !== effectiveChannelId) return
+
+      syncWithServer({
+        phase: 'voting',
+        roundNumber: data.roundNumber || 1,
+        currentQuestion: data.question,
+        timeLimit: data.timeLimit || 15,
+        votingDeadline: data.votingDeadline,
+        timeLeft: data.timeLimit || 15,
+      })
     }
 
-    const handleForceLobby = () => {
+    const handleForceLobby = (data?: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
+
       syncWithServer({
         phase: 'lobby',
         roundNumber: 0,
@@ -100,6 +114,7 @@ export function useSocketSync() {
     }
 
     const handlePaused = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
       syncWithServer({
         isPaused: true,
         ...(typeof data?.timeLeft === 'number' ? { timeLeft: data.timeLeft } : {}),
@@ -107,6 +122,7 @@ export function useSocketSync() {
     }
 
     const handleResumed = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
       syncWithServer({
         isPaused: false,
         ...(typeof data?.timeLeft === 'number' ? { timeLeft: data.timeLeft } : {}),
@@ -122,6 +138,8 @@ export function useSocketSync() {
 
     const handlePlayersUpdate = (data: any) => {
       if (!data) return
+      if (data.channelId && data.channelId !== effectiveChannelId) return
+
       let incomingList: Player[] = []
       if (Array.isArray(data)) {
         incomingList = data.filter(Boolean)
@@ -140,7 +158,7 @@ export function useSocketSync() {
     }
 
     const fetchLatestState = () => {
-      fetch('/api/game/state')
+      fetch(`/api/game/state?channel=${effectiveChannelId}`)
         .then((res) => {
           if (!res.ok) throw new Error('State fetch failed')
           return res.json()
@@ -153,14 +171,28 @@ export function useSocketSync() {
         .catch(() => {})
     }
 
-    const handleConnect = () => {
-      socket.emit('join:room', { roomId: 'room:survival_quiz_main' })
-      socket.emit('join', 'room:survival_quiz_main')
+    const joinChannelRoom = () => {
+      const role = typeof window !== 'undefined'
+        ? (window.location.pathname.includes('/admin') ? 'admin' : (window.location.pathname.includes('/tv') ? 'tv' : 'player'))
+        : 'player'
+      socket.emit('join:channel', { channelId: effectiveChannelId, role })
+      socket.emit('join:room', { roomId: getChannelRoomName(effectiveChannelId) })
+      // 하위 호환성 유지: 1채널은 메인 룸도 함께 조인
+      if (effectiveChannelId === '1') {
+        socket.emit('join:room', { roomId: 'room:survival_quiz_main' })
+        socket.emit('join', 'room:survival_quiz_main')
+      }
       fetchLatestState()
+    }
+
+    const handleConnect = () => {
+      joinChannelRoom()
     }
 
     const handleIncomingChatMessage = (rawMsg: any) => {
       if (!rawMsg) return
+      if (rawMsg.channelId && rawMsg.channelId !== effectiveChannelId) return
+
       const text = ((rawMsg.text || rawMsg.message || '') + '').trim()
       if (!text) return
 
@@ -172,12 +204,13 @@ export function useSocketSync() {
         text: text,
         timestamp: rawMsg.timestamp || Date.now(),
         isNotice: Boolean(rawMsg.isNotice),
-        roomId: rawMsg.roomId || 'room:survival_quiz_main',
+        roomId: rawMsg.roomId || getChannelRoomName(effectiveChannelId),
       }
       useGameStore.getState().addChatMessage(formatted)
     }
 
     const handleQrModeChanged = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
       const mode = data?.mode || data?.qrMode || data
       if (mode) {
         useGameStore.getState().setQrMode(mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' ? 'tunnel' : 'wifi')
@@ -202,8 +235,12 @@ export function useSocketSync() {
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
 
-    // 마운트 시 즉시 최신 상태 가져오기
-    fetchLatestState()
+    // 소켓이 이미 연결되어 있으면 바로 조인
+    if (socket.connected) {
+      joinChannelRoom()
+    } else {
+      fetchLatestState()
+    }
 
     // 소켓이 아직 연결되지 않았을 경우를 대비한 짧은 주기 폴링 백업
     const pollInterval = setInterval(() => {
@@ -232,5 +269,5 @@ export function useSocketSync() {
       socket.off('game:resumed', handleResumed)
       socket.off('server:tunnel_updated', handleTunnelUpdated)
     }
-  }, [syncWithServer, setServerHostUrl])
+  }, [syncWithServer, setServerHostUrl, effectiveChannelId])
 }

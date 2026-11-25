@@ -7,6 +7,7 @@ import {
   minorityQuestions,
   mockNicknames,
 } from '../data/questions'
+import { getChannelIdFromUrl, getChannelRoomName, AVAILABLE_CHANNELS } from '../utils/channel'
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
@@ -21,7 +22,8 @@ function shuffleArray<T>(arr: T[]): T[] {
   return shuffled
 }
 
-const STORAGE_KEY = 'lasttwo_game_state_v2'
+const getStorageKey = (ch: string = '1') => `lasttwo_game_state_ch_${ch}`
+const initialChannelId = getChannelIdFromUrl()
 
 // 더미 참가자 자동 투표 타이머 관리 풀
 let dummyVoteTimers: ReturnType<typeof setTimeout>[] = []
@@ -37,10 +39,10 @@ let lastSyncedPayloadStr = ''
 let lastNextRoundTime = 0
 
 // 로컬스토리지에서 복원
-function loadPersistedState(): Partial<GameState> {
+function loadPersistedState(ch: string = initialChannelId): Partial<GameState> {
   if (typeof window === 'undefined') return {}
   try {
-    const saved = localStorage.getItem(STORAGE_KEY)
+    const saved = localStorage.getItem(getStorageKey(ch)) || (ch === '1' ? localStorage.getItem('lasttwo_game_state_v2') : null)
     if (saved) {
       const parsed = JSON.parse(saved)
       if (parsed.phase === 'lobby' || !parsed.phase) {
@@ -48,8 +50,12 @@ function loadPersistedState(): Partial<GameState> {
         parsed.currentResult = null
         parsed.currentPlayerId = null
         try {
-          localStorage.removeItem('lasttwo_player_id')
-          localStorage.removeItem('lasttwo_player_nickname')
+          localStorage.removeItem(`lasttwo_player_id_ch_${ch}`)
+          localStorage.removeItem(`lasttwo_player_nickname_ch_${ch}`)
+          if (ch === '1') {
+            localStorage.removeItem('lasttwo_player_id')
+            localStorage.removeItem('lasttwo_player_nickname')
+          }
         } catch { }
       }
       return parsed
@@ -70,6 +76,7 @@ function getDefaultHostUrl(): string {
 
 const defaultInitialState: GameState = {
   phase: 'lobby',
+  channelId: initialChannelId,
   roundNumber: 0,
   ruleMode: 'majority',
   qrMode: 'wifi',
@@ -101,10 +108,11 @@ const defaultInitialState: GameState = {
   currentPlayerId: null,
 }
 
-const persisted = loadPersistedState()
+const persisted = loadPersistedState(initialChannelId)
 const initialState: GameState = {
   ...defaultInitialState,
   ...persisted,
+  channelId: initialChannelId,
   questionsList:
     persisted.questionsList && persisted.questionsList.length >= 100 && persisted.questionsList.some((q) => Number(q.id) >= 101)
       ? persisted.questionsList
@@ -113,7 +121,7 @@ const initialState: GameState = {
   // 브라우저 탭 세션 아이디 복구 (대기실/로비일 때는 이전 세션 복원하지 않음)
   currentPlayerId:
     (persisted.phase === 'question' || persisted.phase === 'voting')
-      ? ((typeof window !== 'undefined' ? localStorage.getItem('lasttwo_player_id') : null) || persisted.currentPlayerId || null)
+      ? ((typeof window !== 'undefined' ? (localStorage.getItem(`lasttwo_player_id_ch_${initialChannelId}`) || localStorage.getItem('lasttwo_player_id')) : null) || persisted.currentPlayerId || null)
       : null,
 }
 
@@ -136,7 +144,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
   const persist = () => {
     try {
       const state = get()
+      const channelId = state.channelId || '1'
       const toSave = {
+        channelId,
         phase: state.phase,
         roundNumber: state.roundNumber,
         ruleMode: state.ruleMode,
@@ -158,11 +168,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         serverHostUrl: state.serverHostUrl,
         chatMessages: state.chatMessages.slice(0, 50),
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+      localStorage.setItem(getStorageKey(channelId), JSON.stringify(toSave))
+      if (channelId === '1') {
+        localStorage.setItem('lasttwo_game_state_v2', JSON.stringify(toSave))
+      }
 
       // 관리자 화면(/admin)에서만 서버 전체 상태 동기화 권한 부여 (참가자 및 TV 화면이 대기실 상태로 서버를 덮어쓰는 버그 원천 차단)
       if (typeof window !== 'undefined' && window.location.pathname.includes('/admin')) {
         const syncPayload = {
+          channelId,
           phase: state.phase,
           roundNumber: state.roundNumber,
           ruleMode: state.ruleMode,
@@ -189,6 +203,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
         // 결과('result', 'revealing') 화면 등 동일한 상태를 서버와 무한 브로드캐스트 핑퐁하는 현상 방어
         const payloadKey = JSON.stringify({
+          channelId,
           phase: syncPayload.phase,
           roundNumber: syncPayload.roundNumber,
           questionId: syncPayload.currentQuestion?.id,
@@ -203,7 +218,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           socket.emit('admin:sync', syncPayload)
 
           // 관리자 백업 HTTP REST 동기화 병행 (웹소켓 재연결 지연 시 즉각 구제)
-          fetch('/api/game/sync', {
+          fetch(`/api/game/sync?channel=${channelId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(syncPayload),
@@ -218,13 +233,45 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
   return {
     ...initialState,
 
+    // ===== 채널 설정 =====
+    setChannelId: (newChannelId: string) => {
+      const validCh = (AVAILABLE_CHANNELS as readonly string[]).includes(newChannelId) ? newChannelId : '1'
+      if (get().channelId === validCh) return
+      const chPersisted = loadPersistedState(validCh)
+      set((state) => ({
+        ...state,
+        channelId: validCh,
+        ...chPersisted,
+        players: chPersisted.players || [],
+        votes: chPersisted.votes || {},
+        chatMessages: chPersisted.chatMessages && chPersisted.chatMessages.length > 0 ? chPersisted.chatMessages : defaultInitialState.chatMessages,
+      }))
+
+      const role = typeof window !== 'undefined'
+        ? (window.location.pathname.includes('/admin') ? 'admin' : (window.location.pathname.includes('/tv') ? 'tv' : 'player'))
+        : 'player'
+      socket.emit('join:channel', { channelId: validCh, role })
+      socket.emit('join:room', { roomId: getChannelRoomName(validCh) })
+
+      fetch(`/api/game/state?channel=${validCh}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.phase) {
+            get().syncWithServer(data)
+          }
+        })
+        .catch(() => {})
+    },
+
     // ===== 실시간 사내 채팅 =====
     sendChatMessage: (messageText: string) => {
       const trimmed = messageText.trim()
       if (!trimmed) return
-      const { currentPlayerId, players } = get()
+      const { currentPlayerId, players, channelId: currentCh } = get()
+      const channelId = currentCh || '1'
       const player = players.find((p) => p.id === currentPlayerId)
       const nickname = player ? player.nickname : (currentPlayerId ? '참가자' : '관리자')
+      const roomId = getChannelRoomName(channelId)
 
       const newMsg: ChatMessage = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -234,7 +281,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         text: trimmed,
         timestamp: Date.now(),
         isNotice: !currentPlayerId,
-        roomId: 'room:survival_quiz_main',
+        roomId,
       }
 
       set((state) => {
@@ -251,7 +298,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         nickname,
         text: trimmed,
         message: trimmed,
-        roomId: 'room:survival_quiz_main',
+        roomId,
+        channelId,
         timestamp: newMsg.timestamp,
         isNotice: newMsg.isNotice,
       }
@@ -293,10 +341,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     // ===== QR 접속 모드 설정 (wifi vs tunnel) =====
     setQrMode: (mode: QrMode) => {
       set({ qrMode: mode })
-      socket.emit('admin:change_qr_mode', { mode: mode === 'tunnel' ? 'EXTERNAL' : 'WIFI' })
-      socket.emit('admin:set-qr-mode', { mode })
-      socket.emit('admin:set_qr_mode', { mode })
-      socket.emit('qr:change', { mode })
+      const channelId = get().channelId || '1'
+      socket.emit('admin:change_qr_mode', { channelId, mode: mode === 'tunnel' ? 'EXTERNAL' : 'WIFI' })
+      socket.emit('admin:set-qr-mode', { channelId, mode })
+      socket.emit('admin:set_qr_mode', { channelId, mode })
+      socket.emit('qr:change', { channelId, mode })
       persist()
     },
 
@@ -357,6 +406,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     addPlayer: (nickname: string, existingId?: string) => {
       const existing = get().players.find((p) => p.nickname === nickname)
       const id = existing ? existing.id : (existingId || generateId())
+      const channelId = get().channelId || '1'
 
       const newPlayer: Player = { id, nickname, status: 'alive' as const, joinedAt: Date.now() }
 
@@ -369,38 +419,44 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       })
 
       if (typeof window !== 'undefined') {
-        localStorage.setItem('lasttwo_player_id', id)
-        localStorage.setItem('lasttwo_player_nickname', nickname)
+        localStorage.setItem(`lasttwo_player_id_ch_${channelId}`, id)
+        localStorage.setItem(`lasttwo_player_nickname_ch_${channelId}`, nickname)
+        if (channelId === '1') {
+          localStorage.setItem('lasttwo_player_id', id)
+          localStorage.setItem('lasttwo_player_nickname', nickname)
+        }
       }
       persist()
 
       // 서버에 클라이언트 ID와 함께 웹소켓 참가자 등록 요청
-      socket.emit('player:join', { id, nickname }, (response: any) => {
+      socket.emit('player:join', { channelId, id, nickname }, (response: any) => {
         if (response?.player?.id && response.player.id !== id) {
           set({ currentPlayerId: response.player.id })
-          localStorage.setItem('lasttwo_player_id', response.player.id)
+          localStorage.setItem(`lasttwo_player_id_ch_${channelId}`, response.player.id)
+          if (channelId === '1') localStorage.setItem('lasttwo_player_id', response.player.id)
         }
       })
 
       // 백업 HTTP REST 참가 등록 (웹소켓 연결 지연 시 즉각 백업)
-      fetch('/api/game/join', {
+      fetch(`/api/game/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, nickname }),
+        body: JSON.stringify({ channelId, id, nickname }),
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data?.player?.id && data.player.id !== id) {
             set({ currentPlayerId: data.player.id })
-            localStorage.setItem('lasttwo_player_id', data.player.id)
+            localStorage.setItem(`lasttwo_player_id_ch_${channelId}`, data.player.id)
+            if (channelId === '1') localStorage.setItem('lasttwo_player_id', data.player.id)
           }
         })
         .catch(() => { })
 
-      fetch('/api/join', {
+      fetch(`/api/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, nickname }),
+        body: JSON.stringify({ channelId, id, nickname }),
       }).catch(() => { })
 
       return id
@@ -416,16 +472,18 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     changeNickname: (newNickname: string) => {
       const trimmed = newNickname.trim()
       if (!trimmed || trimmed.length > 10) return
-      const { currentPlayerId } = get()
+      const { currentPlayerId, channelId: currentCh } = get()
       if (!currentPlayerId) return
+      const channelId = currentCh || '1'
 
       set((state) => ({
         players: state.players.map((p) => (p.id === currentPlayerId ? { ...p, nickname: trimmed } : p)),
       }))
-      localStorage.setItem('lasttwo_player_nickname', trimmed)
+      localStorage.setItem(`lasttwo_player_nickname_ch_${channelId}`, trimmed)
+      if (channelId === '1') localStorage.setItem('lasttwo_player_nickname', trimmed)
       persist()
 
-      socket.emit('player:change_nickname', { id: currentPlayerId, newNickname: trimmed })
+      socket.emit('player:change_nickname', { channelId, id: currentPlayerId, newNickname: trimmed })
     },
 
     addMockPlayers: (count: number) => {
@@ -451,7 +509,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       persist()
 
       // 서버에 더미 참가자 즉시 등록 및 전파
-      socket.emit('admin:add_mock_players', { newPlayers, count })
+      const channelId = get().channelId || '1'
+      socket.emit('admin:add_mock_players', { channelId, newPlayers, count })
     },
 
     // ===== 게임 제어 흐름 =====
@@ -471,17 +530,20 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       get().showQuestion()
 
       const state = get()
+      const channelId = state.channelId || '1'
       // 3번 서바이벌 퀴즈 규격: admin:start_game 서버 이벤트 전송
       socket.emit('admin:start_game', {
+        channelId,
         autoStartVoting,
         ruleMode: state.ruleMode,
         timeLimit: state.timeLimit || 15,
         question: state.currentQuestion,
       })
-      fetch('/api/game/start', {
+      fetch(`/api/game/start?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          channelId,
           autoStartVoting,
           ruleMode: state.ruleMode,
           timeLimit: state.timeLimit || 15,
@@ -549,7 +611,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       persist()
 
       // 3번 서바이벌 퀴즈 규격 이벤트 전송
-      socket.emit('admin:start_voting', { timeLimit: limit })
+      const channelId = get().channelId || '1'
+      socket.emit('admin:start_voting', { channelId, timeLimit: limit })
 
       // 생존해 있는 더미 참가자 자동 무작위 투표 시뮬레이션 가동
       get().simulateDummyVotes()
@@ -579,18 +642,20 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       if (get().phase !== 'voting' && get().phase !== 'question') return
       if (get().isPaused) return
 
+      const channelId = get().channelId || '1'
+
       // 웹소켓으로 투표 전송 (3번 서바이벌 퀴즈 호환)
-      socket.emit('player:vote', { playerId, choice }, (res: any) => {
+      socket.emit('player:vote', { channelId, playerId, choice }, (res: any) => {
         if (!res?.success) {
           console.warn('[player:vote 서버 응답]', res?.error)
         }
       })
 
       // 백업 HTTP REST 투표 전송 (소켓 불안정 대비)
-      fetch('/api/game/vote', {
+      fetch(`/api/game/vote?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId, choice }),
+        body: JSON.stringify({ channelId, playerId, choice }),
       }).catch(() => { })
 
       set((state) => ({
@@ -609,8 +674,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }
       set({ isPaused: true, timeLeft: currentRemaining })
       persist()
-      socket.emit('admin:pause')
-      socket.emit('admin:pause_game')
+      const channelId = get().channelId || '1'
+      socket.emit('admin:pause', { channelId })
+      socket.emit('admin:pause_game', { channelId })
     },
 
     resumeGame: () => {
@@ -618,13 +684,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const newDeadline = Date.now() + (timeLeft || 15) * 1000
       set({ isPaused: false, votingDeadline: newDeadline })
       persist()
-      socket.emit('admin:resume')
-      socket.emit('admin:resume_game')
+      const channelId = get().channelId || '1'
+      socket.emit('admin:resume', { channelId })
+      socket.emit('admin:resume_game', { channelId })
     },
 
     endVoting: () => {
       clearDummyVoteTimers()
-      socket.emit('admin:end_voting')
+      const channelId = get().channelId || '1'
+      socket.emit('admin:end_voting', { channelId })
       // 투표 마감 -> 결과 공개 3초 카운트다운 진입
       get().startRevealing()
     },
@@ -781,7 +849,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       persist()
 
       // 결과 화면이 모든 기기(TV, 모바일, 관리자)에 즉시 동일하게 동기화되도록 admin:sync 브로드캐스트
+      const channelId = get().channelId || '1'
       socket.emit('admin:sync', {
+        channelId,
         phase: nextPhase,
         isGameOver,
         soleWinnerId,
@@ -801,7 +871,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }
       lastNextRoundTime = now
 
-      const { phase, players, timeLimit } = get()
+      const { phase, players, timeLimit, channelId: currentCh } = get()
+      const channelId = currentCh || '1'
       // 결과 공개('result', 'elimination') 또는 대기실('lobby') 단계에서만 다음 라운드 진행 허용
       if (phase !== 'result' && phase !== 'elimination' && phase !== 'lobby') {
         console.warn(`⚠️ [nextRound 무시] 현재 단계(${phase})에서는 라운드를 건너뛸 수 없습니다.`)
@@ -819,7 +890,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           soleWinnerId,
         })
         persist()
-        socket.emit('admin:sync', { phase: 'gameover', isGameOver: true, soleWinnerId })
+        socket.emit('admin:sync', { channelId, phase: 'gameover', isGameOver: true, soleWinnerId })
         return
       }
 
@@ -833,7 +904,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const nextQ = get().currentQuestion
 
       // 3번 서바이벌 퀴즈 규격 이벤트 전송 및 투표 시작
-      socket.emit('admin:next_round', { timeLimit: timeLimit || 15, question: nextQ })
+      socket.emit('admin:next_round', { channelId, timeLimit: timeLimit || 15, question: nextQ })
       get().startVoting(timeLimit || 15)
     },
 
@@ -865,6 +936,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     resetGame: () => {
       clearDummyVoteTimers()
+      const channelId = get().channelId || '1'
       // 1. 기존 접속자 전원 유지 & 'alive' 상태로 부활 (탈락 라운드 초기화)
       set((state) => ({
         phase: 'lobby',
@@ -889,7 +961,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       try {
         const state = get()
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        localStorage.setItem(getStorageKey(channelId), JSON.stringify({
+          channelId,
           phase: 'lobby',
           roundNumber: 0,
           currentQuestion: null,
@@ -909,26 +982,30 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           serverHostUrl: state.serverHostUrl,
           chatMessages: state.chatMessages.slice(0, 50),
         }))
+        if (channelId === '1') {
+          localStorage.setItem('lasttwo_game_state_v2', localStorage.getItem(getStorageKey(channelId)) || '')
+        }
       } catch (e) { }
 
       // 서버에 "접속자 유지 리셋" 요청 (소켓 + HTTP)
-      socket.emit('admin:reset_game_keep_players')
-      fetch('/api/game/reset', {
+      socket.emit('admin:reset_game_keep_players', { channelId })
+      fetch(`/api/game/reset?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keepPlayers: true }),
+        body: JSON.stringify({ channelId, keepPlayers: true }),
       }).catch(() => { })
     },
 
     clearAllPlayers: () => {
       clearDummyVoteTimers()
+      const channelId = get().channelId || '1'
       set({ players: [] })
       persist()
-      socket.emit('admin:clear_all_players')
-      fetch('/api/game/reset', {
+      socket.emit('admin:clear_all_players', { channelId })
+      fetch(`/api/game/reset?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keepPlayers: false }),
+        body: JSON.stringify({ channelId, keepPlayers: false }),
       }).catch(() => { })
     },
 
@@ -1077,7 +1154,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           serverHostUrl: state.serverHostUrl,
           chatMessages: state.chatMessages.slice(0, 50),
         }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+        const ch = state.channelId || '1'
+        localStorage.setItem(getStorageKey(ch), JSON.stringify(toSave))
+        if (ch === '1') {
+          localStorage.setItem('lasttwo_game_state_v2', JSON.stringify(toSave))
+        }
       } catch (e) { }
     },
   }

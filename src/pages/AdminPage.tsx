@@ -6,6 +6,7 @@ import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
 import { exportGameResultsToExcel } from '../utils/excelExport'
+import { getChannelIdFromUrl, AVAILABLE_CHANNELS, buildChannelUrl } from '../utils/channel'
 import type { Question, Player, ChatMessage } from '../types/game'
 
 // ===== 로고 =====
@@ -99,6 +100,19 @@ export default function AdminPage() {
   const setQrMode = useGameStore((s) => s.setQrMode)
   const chatMessages = useGameStore((s) => s.chatMessages)
   const clearChatMessages = useGameStore((s) => s.clearChatMessages)
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const channelId = storeChannelId || getChannelIdFromUrl()
+  const setChannelId = useGameStore((s) => s.setChannelId)
+
+  const handleChannelSwitch = (newCh: string) => {
+    if (channelId === newCh) return
+    setChannelId(newCh)
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.set('channel', newCh)
+      window.history.pushState({}, '', url.toString())
+    }
+  }
 
   // 관리자 화면 참가자 입장/갱신 이벤트 직결 수신
   useEffect(() => {
@@ -145,7 +159,7 @@ export default function AdminPage() {
   const isPublicDomain = !isLocalhost && !isPrivateIp
 
   // 1. Wi-Fi 접속 URL: 로컬 사설망 전용 (절대 외부 URL과 혼동되지 않음)
-  const wifiUrl = !isLocalhost
+  const rawWifiUrl = !isLocalhost
     ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
     : `http://${localIp || '192.168.40.111'}:5000/`
 
@@ -159,13 +173,16 @@ export default function AdminPage() {
       !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(url)
     )
 
-  const lteUrl = isExternalUrl(tunnelUrl)
+  const rawLteUrl = isExternalUrl(tunnelUrl)
     ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
     : (isPublicDomain
       ? originUrl
       : (isExternalUrl(serverHostUrl)
         ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
         : ''))
+
+  const wifiUrl = buildChannelUrl(rawWifiUrl, channelId)
+  const lteUrl = rawLteUrl ? buildChannelUrl(rawLteUrl, channelId) : ''
 
   const [customUrlInput, setCustomUrlInput] = useState('')
 
@@ -402,7 +419,30 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gradient-to-br from-navy-dark via-navy to-navy-light text-white">
       {/* 관리자 헤더 */}
       <header className="border-b border-gold/15 bg-navy-dark/80 backdrop-blur px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40">
-        <Logo />
+        <div className="flex items-center gap-4">
+          <Logo />
+          {/* 5개 채널 독립 운영 탭 */}
+          <div className="flex items-center bg-navy rounded-lg p-1 border border-gold/30 shadow-inner">
+            <span className="text-[10px] text-gold/70 font-bold px-1.5 hidden sm:inline">채널</span>
+            {AVAILABLE_CHANNELS.map((ch) => {
+              const isCurrent = channelId === ch
+              return (
+                <button
+                  key={ch}
+                  onClick={() => handleChannelSwitch(ch)}
+                  className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                    isCurrent
+                      ? 'bg-gold text-navy-dark shadow font-extrabold scale-105'
+                      : 'text-gray-400 hover:text-white hover:bg-gold/10'
+                  }`}
+                >
+                  {ch}채널
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
         <div className="flex items-center gap-3">
           <div className="flex bg-navy rounded-lg p-1 border border-gold/20">
             <button
@@ -432,17 +472,17 @@ export default function AdminPage() {
           </button>
 
           <a
-            href="/tv"
+            href={`/tv?channel=${channelId}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => {
               e.preventDefault()
-              window.open('/tv', '_blank', 'noopener,noreferrer')
+              window.open(`/tv?channel=${channelId}`, '_blank', 'noopener,noreferrer')
             }}
             className="px-3 py-1.5 bg-navy-dark/90 hover:bg-gold hover:text-navy-dark text-gold/90 border border-gold/30 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow transition-all cursor-pointer"
-            title="대형 TV 전광판 화면(/tv)을 새 탭/새 창에서 열기"
+            title={`대형 TV 전광판 화면(/tv?channel=${channelId})을 새 탭/새 창에서 열기`}
           >
-            🖥️ TV 화면 열기
+            🖥️ TV 화면 열기 (CH {channelId})
           </a>
 
           <button

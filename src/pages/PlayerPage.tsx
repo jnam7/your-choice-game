@@ -7,6 +7,7 @@ import { useSocketSync } from '../hooks/useSocketSync'
 import { LiveChatDrawer } from '../components/LiveChatDrawer'
 import { safeStorage } from '../utils/safeStorage'
 import { ErrorBoundary } from '../components/ErrorBoundary'
+import { getChannelIdFromUrl } from '../utils/channel'
 import {
   unlockAudioContext,
   isSoundMuted,
@@ -96,6 +97,7 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
     try {
       setError('')
       const localId = 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)
+      const channelId = useGameStore.getState().channelId || getChannelIdFromUrl()
 
       const newPlayer: Player = {
         id: localId,
@@ -105,8 +107,12 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       }
 
       // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장 및 로컬 스토어에 추가
-      safeStorage.setItem('lasttwo_player_id', localId)
-      safeStorage.setItem('lasttwo_player_nickname', trimmed)
+      safeStorage.setItem(`lasttwo_player_id_ch_${channelId}`, localId)
+      safeStorage.setItem(`lasttwo_player_nickname_ch_${channelId}`, trimmed)
+      if (channelId === '1') {
+        safeStorage.setItem('lasttwo_player_id', localId)
+        safeStorage.setItem('lasttwo_player_nickname', trimmed)
+      }
 
       useGameStore.getState().setCurrentPlayer(localId)
       useGameStore.getState().addPlayer(trimmed, localId)
@@ -115,23 +121,23 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       onJoin(newPlayer)
 
       // 3. 서버에 소켓 참가자 등록 전송 (3번 서바이벌 퀴즈 동일)
-      socket.emit('player:join', { id: localId, nickname: trimmed }, (res: any) => {
+      socket.emit('player:join', { channelId, id: localId, nickname: trimmed }, (res: any) => {
         if (res?.success && res?.player) {
           onJoin(res.player)
           useGameStore.getState().setCurrentPlayer(res.player.id)
         }
       })
 
-      fetch('/api/game/join', {
+      fetch(`/api/game/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: localId, nickname: trimmed }),
+        body: JSON.stringify({ channelId, id: localId, nickname: trimmed }),
       }).catch(() => {})
 
-      fetch('/api/join', {
+      fetch(`/api/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: localId, nickname: trimmed }),
+        body: JSON.stringify({ channelId, id: localId, nickname: trimmed }),
       }).catch(() => {})
     } catch (err: any) {
       console.error('[NicknameForm handleSubmit error]', err)
@@ -231,16 +237,17 @@ function WaitingRoom({
 
   // 대기실 체류 중 서버에 지속적 하트비트 등록 (관리자/TV에 접속 카운트 100% 누락 방지)
   useEffect(() => {
-    const localId = currentPlayer?.id || safeStorage.getItem('lasttwo_player_id')
-    const localNick = currentPlayer?.nickname || safeStorage.getItem('lasttwo_player_nickname')
+    const channelId = useGameStore.getState().channelId || getChannelIdFromUrl()
+    const localId = currentPlayer?.id || safeStorage.getItem(`lasttwo_player_id_ch_${channelId}`) || safeStorage.getItem('lasttwo_player_id')
+    const localNick = currentPlayer?.nickname || safeStorage.getItem(`lasttwo_player_nickname_ch_${channelId}`) || safeStorage.getItem('lasttwo_player_nickname')
     if (!localId || !localNick) return
 
     const ensureRegistered = () => {
-      socket.emit('player:join', { id: localId, nickname: localNick })
-      fetch('/api/game/join', {
+      socket.emit('player:join', { channelId, id: localId, nickname: localNick })
+      fetch(`/api/game/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: localId, nickname: localNick }),
+        body: JSON.stringify({ channelId, id: localId, nickname: localNick }),
       }).catch(() => {})
     }
 
@@ -1252,12 +1259,13 @@ export default function PlayerPage() {
 
   // 1. 게임 진행 중 재접속 시 자동 참가/복원 시도 및 관리자 초기화 수신
   useEffect(() => {
-    const sId = safeStorage.getItem('lasttwo_player_id')
-    const sNick = safeStorage.getItem('lasttwo_player_nickname')
+    const channelId = useGameStore.getState().channelId || getChannelIdFromUrl()
+    const sId = safeStorage.getItem(`lasttwo_player_id_ch_${channelId}`) || safeStorage.getItem('lasttwo_player_id')
+    const sNick = safeStorage.getItem(`lasttwo_player_nickname_ch_${channelId}`) || safeStorage.getItem('lasttwo_player_nickname')
 
     // 오직 실제 문제 풀이/투표 진행 중(isPlayPhase)일 때만 백그라운드 재등록
     if (isPlayPhase && sId && sNick) {
-      socket.emit('player:join', { id: sId, nickname: sNick }, (res: any) => {
+      socket.emit('player:join', { channelId, id: sId, nickname: sNick }, (res: any) => {
         if (res?.success && res?.player) {
           setMyPlayer(res.player)
           setCurrentPlayer(res.player.id)
@@ -1382,8 +1390,16 @@ export default function PlayerPage() {
     return <VoteScreen currentPlayer={currentPlayer} />
   }
 
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const currentChannelId = storeChannelId || getChannelIdFromUrl()
+
   return (
     <ErrorBoundary>
+      <div className="fixed top-3.5 left-3.5 z-40 flex items-center gap-2">
+        <span className="px-2.5 py-1 bg-navy-dark/90 border border-gold/40 rounded-lg text-gold font-display font-bold text-xs tracking-wider shadow-lg backdrop-blur">
+          CH {currentChannelId}
+        </span>
+      </div>
       <div className="fixed top-3.5 right-3.5 z-40 flex items-center gap-2">
         <SoundMuteButton />
       </div>

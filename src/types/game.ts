@@ -97,6 +97,9 @@ export interface GameState {
   // 실시간 사내 채팅 메시지 목록 (최신순 50개)
   chatMessages: ChatMessage[]
 
+  // 채널(룸) 식별자 ('1' ~ '5', 기본값: '1')
+  channelId?: string
+
   // 모바일 접속 호스트 URL (예: http://192.168.40.207:3001 또는 공용 도메인)
   serverHostUrl: string
   qrMode?: QrMode
@@ -130,6 +133,9 @@ export interface GameActions {
   resetGame: () => void
   clearAllPlayers: () => void
   forceEndGame: () => void
+
+  // 채널 설정
+  setChannelId: (channelId: string) => void
 
   // 실시간 채팅
   sendChatMessage: (message: string) => void

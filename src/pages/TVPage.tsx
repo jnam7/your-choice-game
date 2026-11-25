@@ -6,6 +6,7 @@ import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
+import { getChannelIdFromUrl, buildChannelUrl } from '../utils/channel'
 import type { Player, ChatMessage } from '../types/game'
 import {
   unlockAudioContext,
@@ -20,19 +21,23 @@ import {
 
 // ===== 관리자 페이지 이동 톱니바퀴 버튼 =====
 function AdminGearButton() {
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const channelId = storeChannelId || getChannelIdFromUrl()
+  const adminUrl = `/admin?channel=${channelId}`
+
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
-    window.open('/admin', '_blank', 'noopener,noreferrer')
+    window.open(adminUrl, '_blank', 'noopener,noreferrer')
   }
 
   return (
     <a
-      href="/admin"
+      href={adminUrl}
       target="_blank"
       rel="noopener noreferrer"
       onClick={handleClick}
       className="p-2.5 bg-navy-dark/70 hover:bg-gold hover:text-navy-dark border border-gold/30 hover:border-gold rounded-xl text-gold/80 hover:text-navy-dark transition-all duration-300 shadow-xl backdrop-blur group opacity-60 hover:opacity-100 flex items-center justify-center cursor-pointer"
-      title="관리자 설정 페이지(/admin)를 새 탭에서 열기"
+      title={`관리자 설정 페이지(${adminUrl})를 새 탭에서 열기`}
     >
       <svg
         className="w-5 h-5 transition-transform duration-500 group-hover:rotate-90"
@@ -105,15 +110,21 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
   const storeRuleMode = useGameStore((s) => s.ruleMode)
   const currentMode = customRuleMode || storeRuleMode || 'majority'
   const players = useGameStore((s) => s.players)
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const channelId = storeChannelId || getChannelIdFromUrl()
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
 
   return (
     <header className="relative flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
+        {/* 채널 식별 배지 */}
+        <span className="px-3 py-1 bg-gold/20 border border-gold/50 rounded-lg text-gold font-display font-bold text-sm md:text-base tracking-wider shadow-md">
+          CH {channelId}
+        </span>
         <h1 className="font-display text-2xl md:text-3xl text-gold text-shadow-glow">
           당신의 선택
         </h1>
-        <span className="font-display text-sm md:text-base text-gold-light tracking-[0.3em] opacity-80">
+        <span className="font-display text-sm md:text-base text-gold-light tracking-[0.3em] opacity-80 hidden md:inline">
           YOUR CHOICE
         </span>
       </div>
@@ -229,8 +240,11 @@ function TVLobby() {
   const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)
   const isPublicDomain = !isLocalhost && !isPrivateIp
 
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const channelId = storeChannelId || getChannelIdFromUrl()
+
   // 1. Wi-Fi 접속 URL: 로컬 사설망 IP 기반 (절대 외부 URL과 혼용되지 않음)
-  const wifiUrl = !isLocalhost
+  const baseWifiUrl = !isLocalhost
     ? `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ':5000'}/`
     : `http://${localIp || '192.168.40.111'}:5000/`
 
@@ -244,13 +258,17 @@ function TVLobby() {
       !/192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\./.test(url)
     )
 
-  const publicLteUrl = isExternalUrl(tunnelUrl)
+  const basePublicLteUrl = isExternalUrl(tunnelUrl)
     ? (tunnelUrl.endsWith('/') ? tunnelUrl : `${tunnelUrl}/`)
     : (isPublicDomain
       ? originUrl
       : (isExternalUrl(serverHostUrl)
         ? (serverHostUrl.endsWith('/') ? serverHostUrl : `${serverHostUrl}/`)
         : ''))
+
+  // 채널 파라미터가 자동으로 포함된 접속 QR URL 생성 (?channel=N)
+  const wifiUrl = buildChannelUrl(baseWifiUrl, channelId)
+  const publicLteUrl = basePublicLteUrl ? buildChannelUrl(basePublicLteUrl, channelId) : ''
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -295,8 +313,9 @@ function TVLobby() {
         <p className="font-display text-lg md:text-2xl text-gold-light tracking-[0.35em] mt-1.5">
           YOUR CHOICE - THE LAST TWO
         </p>
-        <p className="text-gray-300 text-xs md:text-sm mt-1.5 font-medium">
-          스마트폰 카메라로 화면의 QR 코드를 스캔하여 게임에 참가하세요!
+        <p className="text-gray-300 text-xs md:text-sm mt-1.5 font-medium flex items-center justify-center gap-2">
+          <span className="text-gold font-bold">[CH {channelId}]</span>
+          <span>스마트폰 카메라로 화면의 QR 코드를 스캔하여 게임에 참가하세요!</span>
         </p>
       </motion.div>
 
