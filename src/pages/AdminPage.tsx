@@ -603,38 +603,6 @@ export default function AdminPage() {
                       {Math.round(bgmMasterVolume * 100)}%
                     </span>
                   </div>
-
-                  {/* TV 화면 원격 QR 모드 제어 버튼 그룹 */}
-                  <div className="flex items-center gap-1.5 bg-navy px-3 py-1.5 rounded-lg border border-gold/20 text-xs">
-                    <span className="text-gold font-bold flex items-center gap-1 shrink-0">
-                      📺 TV QR 모드:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateQrMode('wifi')}
-                      className={`px-2.5 py-1 rounded font-bold transition-all flex items-center gap-1 ${
-                        (qrMode || 'wifi') === 'wifi'
-                          ? 'bg-emerald-500 text-navy-dark shadow-md shadow-emerald-500/30 font-extrabold'
-                          : 'bg-navy-dark border border-emerald-500/30 text-gray-300 hover:text-white'
-                      }`}
-                      title="모든 TV 화면의 QR을 사내 Wi-Fi 로컬 IP 주소로 원격 변경합니다"
-                    >
-                      <span>📶 사내 Wi-Fi</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateQrMode('tunnel')}
-                      className={`px-2.5 py-1 rounded font-bold transition-all flex items-center gap-1 ${
-                        qrMode === 'tunnel'
-                          ? 'bg-gold text-navy-dark shadow-md shadow-gold/30 font-extrabold'
-                          : 'bg-navy-dark border border-gold/30 text-gray-300 hover:text-white'
-                      }`}
-                      title="모든 TV 화면의 QR을 외부 공인 배포 URL로 원격 변경합니다"
-                    >
-                      <span>🌍 터널/외부 접속</span>
-                      {lteUrl ? <span className="text-[10px]">🟢</span> : <span className="text-[10px]">⏳</span>}
-                    </button>
-                  </div>
                 </div>
               </div>
 
