@@ -414,11 +414,16 @@ function applyAdminSync(updates, channelId = '1') {
     const { players: incomingPlayers, channelId: _ch, ...safeUpdates } = updates
     Object.assign(ch.gameState, safeUpdates)
 
-    if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
-      const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
-      for (const p of ch.gameState.players) {
-        if (statusMap.has(p.id)) {
-          p.status = statusMap.get(p.id)
+    if (Array.isArray(incomingPlayers)) {
+      if (ch.gameState.phase === 'lobby') {
+        // 대기실에서는 클라이언트가 보낸 최신 플레이어 목록(더미 추가 등)을 전체 반영
+        ch.gameState.players = incomingPlayers
+      } else if (incomingPlayers.length > 0) {
+        const statusMap = new Map(incomingPlayers.map((p) => [p.id, p.status]))
+        for (const p of ch.gameState.players) {
+          if (statusMap.has(p.id)) {
+            p.status = statusMap.get(p.id)
+          }
         }
       }
     }

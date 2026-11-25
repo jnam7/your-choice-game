@@ -184,11 +184,15 @@ function applyAdminSync(updates: any, channelId = '1') {
     const { players: incomingPlayers, channelId: _ch, ...safeUpdates } = updates
     Object.assign(ch.gameState, safeUpdates)
 
-    if (Array.isArray(incomingPlayers) && incomingPlayers.length > 0) {
-      const statusMap = new Map(incomingPlayers.map((p: any) => [p.id, p.status]))
-      for (const p of ch.gameState.players) {
-        if (statusMap.has(p.id)) {
-          p.status = statusMap.get(p.id)
+    if (Array.isArray(incomingPlayers)) {
+      if (ch.gameState.phase === 'lobby') {
+        ch.gameState.players = incomingPlayers
+      } else if (incomingPlayers.length > 0) {
+        const statusMap = new Map(incomingPlayers.map((p: any) => [p.id, p.status]))
+        for (const p of ch.gameState.players) {
+          if (statusMap.has(p.id)) {
+            p.status = statusMap.get(p.id)
+          }
         }
       }
     }
