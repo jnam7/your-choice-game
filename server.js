@@ -933,19 +933,27 @@ io.on('connection', (socket) => {
     }
   })
 
-  // 관리자 대기실 QR 모드 변경 요청 (admin:change_qr_mode)
-  socket.on('admin:change_qr_mode', (data, callback) => {
+  // 관리자 대기실 QR 모드 변경 요청 (admin:change_qr_mode, admin:set-qr-mode, admin:set_qr_mode, qr:change)
+  const handleQrModeChange = (data, callback) => {
     try {
-      const mode = data?.mode === 'EXTERNAL' || data?.mode === 'tunnel' ? 'tunnel' : 'wifi'
+      const rawMode = data?.mode || data?.qrMode || data
+      const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' ? 'tunnel' : 'wifi'
       gameState.qrMode = mode
       broadcastState()
       io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode })
       io.emit('game:qr_mode_changed', { mode })
+      io.to(SOCKET_ROOM_MAIN).emit('qr:change', { mode })
+      io.emit('qr:change', { mode })
+      console.log(`📡 [QR MODE CHANGED] -> ${mode}`)
       if (callback) callback({ success: true, mode })
     } catch (err) {
       if (callback) callback({ success: false, mode: 'wifi' })
     }
-  })
+  }
+  socket.on('admin:change_qr_mode', handleQrModeChange)
+  socket.on('admin:set-qr-mode', handleQrModeChange)
+  socket.on('admin:set_qr_mode', handleQrModeChange)
+  socket.on('qr:change', handleQrModeChange)
 })
 
 // 4. 로컬 IP 자동 감지 유틸리티

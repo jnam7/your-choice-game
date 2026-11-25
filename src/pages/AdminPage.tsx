@@ -196,18 +196,43 @@ export default function AdminPage() {
     }
 
     const handleQrModeChanged = (data: any) => {
-      if (data?.mode) {
-        setAdminQrTab(data.mode === 'EXTERNAL' || data.mode === 'tunnel' ? 'lte' : 'wifi')
+      const mode = data?.mode || data?.qrMode || data
+      if (mode) {
+        const isTunnel = mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte'
+        setAdminQrTab(isTunnel ? 'lte' : 'wifi')
       }
     }
 
     socket.on('server:tunnel_updated', handleTunnelUpdated)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
+    socket.on('qr:change', handleQrModeChanged)
+    socket.on('qr:changed', handleQrModeChanged)
     return () => {
       socket.off('server:tunnel_updated', handleTunnelUpdated)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
+      socket.off('qr:change', handleQrModeChanged)
+      socket.off('qr:changed', handleQrModeChanged)
     }
   }, [setServerHostUrl])
+
+  // 관리자 QR 탭과 스토어 qrMode 동기화
+  useEffect(() => {
+    if (qrMode) {
+      setAdminQrTab(qrMode === 'tunnel' ? 'lte' : 'wifi')
+    }
+  }, [qrMode])
+
+  // 관리자 QR 모드 변경 및 TV 화면 원격 동기화
+  const handleUpdateQrMode = (mode: 'wifi' | 'tunnel') => {
+    setAdminQrTab(mode === 'tunnel' ? 'lte' : 'wifi')
+    setQrMode(mode)
+    const modePayload = mode === 'tunnel' ? 'EXTERNAL' : 'WIFI'
+    socket.emit('admin:change_qr_mode', { mode: modePayload })
+    socket.emit('admin:set-qr-mode', { mode })
+    socket.emit('admin:set_qr_mode', { mode })
+    socket.emit('qr:change', { mode })
+    socket.emit('admin:sync', { qrMode: mode })
+  }
 
   // 문제 관리 폼 상태
   const [formCategory, setFormCategory] = useState('직장생활')
@@ -533,6 +558,38 @@ export default function AdminPage() {
                     <span className="font-mono text-gold-light w-8 text-right font-bold">
                       {Math.round(bgmMasterVolume * 100)}%
                     </span>
+                  </div>
+
+                  {/* TV 화면 원격 QR 모드 제어 버튼 그룹 */}
+                  <div className="flex items-center gap-1.5 bg-navy px-3 py-1.5 rounded-lg border border-gold/20 text-xs">
+                    <span className="text-gold font-bold flex items-center gap-1 shrink-0">
+                      📺 TV QR 모드:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateQrMode('wifi')}
+                      className={`px-2.5 py-1 rounded font-bold transition-all flex items-center gap-1 ${
+                        (qrMode || 'wifi') === 'wifi'
+                          ? 'bg-emerald-500 text-navy-dark shadow-md shadow-emerald-500/30 font-extrabold'
+                          : 'bg-navy-dark border border-emerald-500/30 text-gray-300 hover:text-white'
+                      }`}
+                      title="모든 TV 화면의 QR을 사내 Wi-Fi 로컬 IP 주소로 원격 변경합니다"
+                    >
+                      <span>📶 사내 Wi-Fi</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateQrMode('tunnel')}
+                      className={`px-2.5 py-1 rounded font-bold transition-all flex items-center gap-1 ${
+                        qrMode === 'tunnel'
+                          ? 'bg-gold text-navy-dark shadow-md shadow-gold/30 font-extrabold'
+                          : 'bg-navy-dark border border-gold/30 text-gray-300 hover:text-white'
+                      }`}
+                      title="모든 TV 화면의 QR을 외부 공인 배포 URL로 원격 변경합니다"
+                    >
+                      <span>🌍 터널/외부 접속</span>
+                      {lteUrl ? <span className="text-[10px]">🟢</span> : <span className="text-[10px]">⏳</span>}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -956,7 +1013,7 @@ export default function AdminPage() {
             {/* 참가자 접속용 QR 코드 */}
             <div className="glass-card p-5 text-center border border-gold/20 shadow-xl">
               <div className="flex justify-between items-center mb-3">
-                <h3 className="font-display text-base text-gold">📱 모바일 참가자 접속 QR</h3>
+                <h3 className="font-display text-base text-gold">📡 TV 화면 원격 QR 제어</h3>
                 {adminQrTab === 'lte' && (
                   <button
                     onClick={() => setIsEditingUrl(!isEditingUrl)}
@@ -971,34 +1028,26 @@ export default function AdminPage() {
               <div className="flex gap-2 mb-3.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    setAdminQrTab('wifi')
-                    setQrMode('wifi')
-                    socket.emit('admin:change_qr_mode', { mode: 'WIFI' })
-                  }}
+                  onClick={() => handleUpdateQrMode('wifi')}
                   className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    adminQrTab === 'wifi'
-                      ? 'bg-emerald-500 text-navy-dark border-emerald-400 shadow-lg shadow-emerald-500/30'
+                    (qrMode || 'wifi') === 'wifi'
+                      ? 'bg-emerald-500 text-navy-dark border-emerald-400 shadow-lg shadow-emerald-500/30 font-extrabold'
                       : 'bg-navy-dark border-emerald-500/30 text-gray-300 hover:text-white'
                   }`}
                 >
-                  📶 사내 Wi-Fi QR
+                  📶 사내 Wi-Fi (로컬 IP)
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setAdminQrTab('lte')
-                    setQrMode('tunnel')
-                    socket.emit('admin:change_qr_mode', { mode: 'EXTERNAL' })
-                  }}
+                  onClick={() => handleUpdateQrMode('tunnel')}
                   className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    adminQrTab === 'lte'
-                      ? 'bg-gold text-navy-dark border-gold shadow-lg shadow-gold/30'
+                    qrMode === 'tunnel'
+                      ? 'bg-gold text-navy-dark border-gold shadow-lg shadow-gold/30 font-extrabold'
                       : 'bg-navy-dark border-gold/30 text-gray-300 hover:text-white'
                   }`}
                 >
-                  🌍 LTE / 5G QR {lteUrl ? '🟢' : '⏳'}
+                  🌍 터널/외부 접속 (배포 URL) {lteUrl ? '🟢' : '⏳'}
                 </button>
               </div>
 

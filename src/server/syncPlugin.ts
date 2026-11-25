@@ -16,7 +16,7 @@ function getLocalNetworkIp() {
         }
       }
     }
-  } catch {}
+  } catch { }
   return 'localhost'
 }
 
@@ -745,17 +745,25 @@ export function syncPlugin(): Plugin {
         }
       })
 
-      socket.on('admin:change_qr_mode', (data, callback) => {
+      const handleQrModeChange = (data: any, callback?: any) => {
         try {
-          const mode = data?.mode === 'EXTERNAL' || data?.mode === 'tunnel' ? 'tunnel' : 'wifi'
+          const rawMode = data?.mode || data?.qrMode || data
+          const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' ? 'tunnel' : 'wifi'
           gameState.qrMode = mode
+          broadcastState()
           ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode })
           ioInstance?.emit('game:qr_mode_changed', { mode })
+          ioInstance?.to(SOCKET_ROOM_MAIN).emit('qr:change', { mode })
+          ioInstance?.emit('qr:change', { mode })
           if (callback) callback({ success: true, mode })
         } catch (err) {
           if (callback) callback({ success: false, mode: 'wifi' })
         }
-      })
+      }
+      socket.on('admin:change_qr_mode', handleQrModeChange)
+      socket.on('admin:set-qr-mode', handleQrModeChange)
+      socket.on('admin:set_qr_mode', handleQrModeChange)
+      socket.on('qr:change', handleQrModeChange)
     })
   }
 

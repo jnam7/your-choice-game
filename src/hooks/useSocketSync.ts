@@ -177,6 +177,13 @@ export function useSocketSync() {
       useGameStore.getState().addChatMessage(formatted)
     }
 
+    const handleQrModeChanged = (data: any) => {
+      const mode = data?.mode || data?.qrMode || data
+      if (mode) {
+        useGameStore.getState().setQrMode(mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' ? 'tunnel' : 'wifi')
+      }
+    }
+
     socket.on('connect', handleConnect)
     socket.on('chat:message', handleIncomingChatMessage)
     socket.on('game:state_sync', handleStateSync)
@@ -191,6 +198,9 @@ export function useSocketSync() {
     socket.on('game:paused', handlePaused)
     socket.on('game:resumed', handleResumed)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
+    socket.on('game:qr_mode_changed', handleQrModeChanged)
+    socket.on('qr:change', handleQrModeChanged)
+    socket.on('qr:changed', handleQrModeChanged)
 
     // 마운트 시 즉시 최신 상태 가져오기
     fetchLatestState()
@@ -213,6 +223,9 @@ export function useSocketSync() {
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
       socket.off('game:round_started', handleRoundStarted)
+      socket.off('game:qr_mode_changed', handleQrModeChanged)
+      socket.off('qr:change', handleQrModeChanged)
+      socket.off('qr:changed', handleQrModeChanged)
       socket.off('game:force_lobby', handleForceLobby)
       socket.off('game:set_reset', handleForceLobby)
       socket.off('game:paused', handlePaused)

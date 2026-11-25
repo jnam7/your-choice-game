@@ -198,8 +198,9 @@ function TVLobby() {
     }
 
     const handleQrModeChanged = (data: any) => {
-      if (data?.mode) {
-        setQrMode(data.mode === 'EXTERNAL' || data.mode === 'tunnel' ? 'tunnel' : 'wifi')
+      const mode = data?.mode || data?.qrMode || data
+      if (mode) {
+        setQrMode(mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' ? 'tunnel' : 'wifi')
       }
     }
 
@@ -207,12 +208,18 @@ function TVLobby() {
     socket.on('player:joined', handlePlayersUpdate)
     socket.on('players:update', handlePlayersUpdate)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
+    socket.on('qr:change', handleQrModeChanged)
+    socket.on('qr:changed', handleQrModeChanged)
+    socket.on('admin:qr_mode_changed', handleQrModeChanged)
 
     return () => {
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
+      socket.off('qr:change', handleQrModeChanged)
+      socket.off('qr:changed', handleQrModeChanged)
+      socket.off('admin:qr_mode_changed', handleQrModeChanged)
     }
   }, [setQrMode])
 
@@ -268,13 +275,8 @@ function TVLobby() {
     }
   }, [])
 
-  // 활성 탭: 'wifi' 또는 'tunnel' (관리자 화면과 양방향 실시간 동기화)
+  // 관리자 설정 기반 현재 활성 QR 모드 ('wifi' | 'tunnel')
   const activeTab: 'wifi' | 'tunnel' = qrMode === 'tunnel' ? 'tunnel' : 'wifi'
-
-  const handleSelectTab = (tab: 'wifi' | 'tunnel') => {
-    setQrMode(tab)
-    socket.emit('admin:change_qr_mode', { mode: tab === 'tunnel' ? 'EXTERNAL' : 'WIFI' })
-  }
 
   return (
     <div className="w-full flex-1 flex flex-col items-center justify-center p-4 md:p-6 relative my-auto">
@@ -285,7 +287,7 @@ function TVLobby() {
         initial={{ opacity: 0, y: -40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 1, type: 'spring' }}
-        className="text-center mb-4"
+        className="text-center mb-6"
       >
         <h1 className="font-display text-4xl md:text-6xl lg:text-7xl text-gold text-shadow-glow tracking-tight">
           당신의 선택
@@ -296,44 +298,6 @@ function TVLobby() {
         <p className="text-gray-300 text-xs md:text-sm mt-1.5 font-medium">
           스마트폰 카메라로 화면의 QR 코드를 스캔하여 게임에 참가하세요!
         </p>
-      </motion.div>
-
-      {/* 접속 방식 선택 탭 버튼 (오직 1개의 QR만 중앙에 표시) */}
-      <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="mb-6 flex items-center justify-center gap-3 p-1.5 bg-navy-dark/90 border border-gold/30 rounded-2xl shadow-xl backdrop-blur max-w-lg w-full"
-      >
-        <button
-          onClick={() => handleSelectTab('wifi')}
-          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${activeTab === 'wifi'
-              ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 text-white shadow-lg shadow-emerald-500/30 scale-102 font-extrabold'
-              : 'text-gray-300 hover:text-white hover:bg-white/5'
-            }`}
-        >
-          <span>📶 같은 Wi-Fi 접속</span>
-        </button>
-
-        <button
-          onClick={() => handleSelectTab('tunnel')}
-          className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all duration-300 ${activeTab === 'tunnel'
-              ? 'bg-gradient-to-r from-gold-dark via-gold to-gold-light text-navy-dark shadow-lg shadow-gold/30 scale-102 font-extrabold'
-              : 'text-gray-300 hover:text-white hover:bg-white/5'
-            }`}
-        >
-          <span>🌍 어디서나(LTE/5G)</span>
-          {publicLteUrl ? (
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-            </span>
-          ) : (
-            <span className="text-[11px] text-yellow-300 font-normal bg-yellow-900/60 px-2 py-0.5 rounded-full border border-yellow-500/40">
-              대기중
-            </span>
-          )}
-        </button>
       </motion.div>
 
       {/* 화면 중앙 단 1개의 대형 QR 코드 카드 */}
@@ -391,7 +355,7 @@ function TVLobby() {
             <span className="text-4xl mb-3 animate-spin">🔄</span>
             <p className="text-gold font-bold text-sm mb-1.5">외부 공인 주소 연결 중</p>
             <p className="text-gray-300 text-xs leading-relaxed mb-3">
-              같은 공간에 계신 분들은 상단의 <span className="text-emerald-400 font-bold">[📶 같은 Wi-Fi 접속]</span> 탭을 클릭하여 즉시 접속하세요.
+              관리자 페이지에서 사내 Wi-Fi QR 모드로 변경하여 즉시 접속할 수 있습니다.
             </p>
             <p className="text-[10px] text-gray-500 font-mono">
               (서버 node server.mjs 실행 시 자동 발급)
