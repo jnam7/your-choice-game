@@ -6,7 +6,7 @@ import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
-import { getChannelIdFromUrl, buildChannelUrl } from '../utils/channel'
+import { getChannelIdFromUrl, buildChannelUrl, AVAILABLE_CHANNELS } from '../utils/channel'
 import type { Player, ChatMessage } from '../types/game'
 import {
   unlockAudioContext,
@@ -112,21 +112,50 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
   const players = useGameStore((s) => s.players)
   const storeChannelId = useGameStore((s) => s.channelId)
   const channelId = storeChannelId || getChannelIdFromUrl()
+  const setChannelId = useGameStore((s) => s.setChannelId)
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
+
+  const handleChannelSwitch = (newCh: string) => {
+    if (channelId === newCh) return
+    setChannelId(newCh)
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.set('channel', newCh)
+      window.history.pushState({}, '', url.toString())
+    }
+  }
 
   return (
     <header className="relative flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
-      <div className="flex items-center gap-3">
-        {/* 채널 식별 배지 */}
-        <span className="px-3 py-1 bg-gold/20 border border-gold/50 rounded-lg text-gold font-display font-bold text-sm md:text-base tracking-wider shadow-md">
-          CH {channelId}
-        </span>
+      <div className="flex items-center gap-4">
         <h1 className="font-display text-2xl md:text-3xl text-gold text-shadow-glow">
           당신의 선택
         </h1>
-        <span className="font-display text-sm md:text-base text-gold-light tracking-[0.3em] opacity-80 hidden md:inline">
+        <span className="font-display text-sm md:text-base text-gold-light tracking-[0.3em] opacity-80 hidden lg:inline">
           YOUR CHOICE
         </span>
+
+        {/* 5개 채널 직접 전환 버튼 그룹 */}
+        <div className="flex items-center bg-navy-dark/90 border border-gold/40 rounded-xl p-1 shadow-lg gap-1">
+          <span className="text-[10px] text-gold/70 font-bold px-1.5 hidden sm:inline">채널</span>
+          {AVAILABLE_CHANNELS.map((ch) => {
+            const isActive = channelId === ch
+            return (
+              <button
+                key={ch}
+                onClick={() => handleChannelSwitch(ch)}
+                className={`px-2.5 py-1 rounded-lg text-xs md:text-sm font-display font-bold transition-all ${
+                  isActive
+                    ? 'bg-gradient-to-r from-gold-dark to-gold text-navy-dark shadow-md scale-105 ring-2 ring-gold/40 font-extrabold'
+                    : 'text-gray-300 hover:text-white hover:bg-gold/15'
+                }`}
+                title={`CH ${ch} (채널 ${ch}번 전광판으로 전환)`}
+              >
+                CH {ch}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* 룰 모드 뱃지: 화면 상단 중앙 정렬 */}
