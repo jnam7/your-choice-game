@@ -211,6 +211,14 @@ export function useSocketSync() {
       useGameStore.getState().addChatMessage(formatted)
     }
 
+    const handleRuleModeChanged = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
+      const mode = data?.ruleMode || data?.mode
+      if (mode === 'majority' || mode === 'minority') {
+        useGameStore.getState().setRuleMode(mode)
+      }
+    }
+
     const handleQrModeChanged = (data: any) => {
       if (data?.channelId && data.channelId !== effectiveChannelId) return
       const mode = data?.mode || data?.qrMode || data
@@ -235,6 +243,7 @@ export function useSocketSync() {
     socket.on('game:paused', handlePaused)
     socket.on('game:resumed', handleResumed)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
+    socket.on('game:rule_mode_changed', handleRuleModeChanged)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
@@ -266,6 +275,7 @@ export function useSocketSync() {
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
       socket.off('game:round_started', handleRoundStarted)
+      socket.off('game:rule_mode_changed', handleRuleModeChanged)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
       socket.off('qr:change', handleQrModeChanged)
       socket.off('qr:changed', handleQrModeChanged)

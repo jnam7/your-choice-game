@@ -236,40 +236,27 @@ function computeAndPublishResult(channelId = '1') {
 
   let majority
   let eliminatedIds = []
+  const isMinorityMode = (ruleMode === 'minority')
 
-  if (ruleMode === 'minority') {
-    if (votesA > 0 && votesB > 0) {
-      if (votesA === votesB) {
-        majority = 'tie'
-        eliminatedIds = [...nonVoterIds]
-      } else if (votesA < votesB) {
-        majority = 'A'
-        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
-        eliminatedIds = [...minorityLosers, ...nonVoterIds]
-      } else {
-        majority = 'B'
-        const minorityLosers = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
-        eliminatedIds = [...minorityLosers, ...nonVoterIds]
-      }
-    } else if (votesA > 0 && votesB === 0) {
-      majority = 'A'
-      eliminatedIds = [...nonVoterIds]
-    } else if (votesA === 0 && votesB > 0) {
+  if (votesA === votesB) {
+    majority = 'tie'
+    eliminatedIds = [...nonVoterIds]
+  } else if (votesA > votesB) {
+    if (isMinorityMode) {
       majority = 'B'
-      eliminatedIds = [...nonVoterIds]
+      const majorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+      eliminatedIds = [...majorityIds, ...nonVoterIds]
     } else {
-      majority = 'tie'
-      eliminatedIds = [...nonVoterIds]
-    }
-  } else {
-    // 다수의 선택 모드
-    if (votesA === votesB) {
-      majority = 'tie'
-      eliminatedIds = [...nonVoterIds]
-    } else if (votesA > votesB) {
       majority = 'A'
       const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
       eliminatedIds = [...minorityIds, ...nonVoterIds]
+    }
+  } else {
+    // votesB > votesA
+    if (isMinorityMode) {
+      majority = 'A'
+      const majorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+      eliminatedIds = [...majorityIds, ...nonVoterIds]
     } else {
       majority = 'B'
       const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
@@ -1064,6 +1051,29 @@ io.on('connection', (socket) => {
       console.error('[admin:update_server_url Error]', e)
     }
   })
+
+  // 관리자 룰 모드 변경 요청
+  const handleRuleModeChange = (data, callback) => {
+    try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const mode = data?.ruleMode || data?.mode || (data === 'minority' ? 'minority' : 'majority')
+      ch.gameState.ruleMode = mode === 'minority' ? 'minority' : 'majority'
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      io.to(room).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+      }
+      console.log(`🎯 [CH ${ch.id} RULE MODE] -> ${ch.gameState.ruleMode}`)
+      if (callback) callback({ success: true, ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+    } catch (err) {
+      if (callback) callback({ success: false, error: err.message })
+    }
+  }
+
+  socket.on('admin:set_rule_mode', handleRuleModeChange)
+  socket.on('admin:set-rule-mode', handleRuleModeChange)
 
   // 관리자 대기실 QR 모드 변경 요청
   const handleQrModeChange = (data, callback) => {

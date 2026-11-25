@@ -352,6 +352,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     // ===== 룰 모드 설정 (다수의 선택 vs 소수의 선택) =====
     setRuleMode: (mode: RuleMode) => {
       set({ ruleMode: mode })
+      const channelId = get().channelId || '1'
+      socket.emit('admin:set_rule_mode', { channelId, ruleMode: mode })
+      socket.emit('admin:set-rule-mode', { channelId, ruleMode: mode })
+      socket.emit('admin:sync', { channelId, ruleMode: mode })
       persist()
     },
 
@@ -516,9 +520,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     // ===== 게임 제어 흐름 =====
     startGame: (autoStartVoting = true) => {
+      const currentRule = get().ruleMode || 'majority'
       set({
         phase: 'question',
         roundNumber: 1,
+        ruleMode: currentRule,
         roundResults: [],
         currentResult: null,
         usedQuestionIds: [],
@@ -536,7 +542,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       socket.emit('admin:start_game', {
         channelId,
         autoStartVoting,
-        ruleMode: state.ruleMode,
+        ruleMode: currentRule,
         timeLimit: state.timeLimit || 15,
         question: state.currentQuestion,
       })
@@ -546,7 +552,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         body: JSON.stringify({
           channelId,
           autoStartVoting,
-          ruleMode: state.ruleMode,
+          ruleMode: currentRule,
           timeLimit: state.timeLimit || 15,
           question: state.currentQuestion,
         }),
@@ -734,61 +740,44 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         .map((p) => p.id)
 
       // 2. 서바이벌 판정 (다수의 선택 vs 소수의 선택)
+      const isMinorityMode = (ruleMode === 'minority')
       let majority: 'A' | 'B' | 'tie'
       let eliminatedIds: string[] = []
 
-      if (ruleMode === 'minority') {
-        // [소수의 선택 모드]
-        // 더 적은 표를 얻은 선택지가 승리.
-        // 단, 투표수가 0표인 선택지는 제외하고 실제 투표가 발생한 선택지 중 적은 쪽을 승리로 판정.
-        if (votesA > 0 && votesB > 0) {
-          if (votesA === votesB) {
-            majority = 'tie'
-            eliminatedIds = [...nonVoterIds]
-          } else if (votesA < votesB) {
-            majority = 'A' // A 소수 승리 -> B 선택자 탈락
-            const minorityLosers = Object.entries(validVotes)
-              .filter(([, choice]) => choice === 'B')
-              .map(([id]) => id)
-            eliminatedIds = [...minorityLosers, ...nonVoterIds]
-          } else {
-            majority = 'B' // B 소수 승리 -> A 선택자 탈락
-            const minorityLosers = Object.entries(validVotes)
-              .filter(([, choice]) => choice === 'A')
-              .map(([id]) => id)
-            eliminatedIds = [...minorityLosers, ...nonVoterIds]
-          }
-        } else if (votesA > 0 && votesB === 0) {
-          // 0표인 B는 제외, 실제 투표가 발생한 A가 승리
-          majority = 'A'
-          eliminatedIds = [...nonVoterIds]
-        } else if (votesA === 0 && votesB > 0) {
-          // 0표인 A는 제외, 실제 투표가 발생한 B가 승리
+      if (votesA === votesB) {
+        // 동률 시: 실제 투표자 전원 생존, 미투표자만 탈락
+        majority = 'tie'
+        eliminatedIds = [...nonVoterIds]
+      } else if (votesA > votesB) {
+        if (isMinorityMode) {
+          // [소수의 선택 룰]: B(적은 쪽) 생존, A(많은 쪽) + 미투표자 탈락
           majority = 'B'
-          eliminatedIds = [...nonVoterIds]
+          const majorityIds = Object.entries(validVotes)
+            .filter(([, c]) => c === 'A')
+            .map(([id]) => id)
+          eliminatedIds = [...majorityIds, ...nonVoterIds]
         } else {
-          // 둘 다 0표인 경우 동률 처리
-          majority = 'tie'
-          eliminatedIds = [...nonVoterIds]
-        }
-      } else {
-        // [다수의 선택 모드 (기본)]
-        if (votesA === votesB) {
-          // 동률 시 실제 투표자 전원 생존! 미투표자만 탈락
-          majority = 'tie'
-          eliminatedIds = [...nonVoterIds]
-        } else if (votesA > votesB) {
-          // A 다수 생존, B 소수 선택자 + 미투표자 탈락
+          // [다수의 선택 룰]: A(많은 쪽) 생존, B(적은 쪽) + 미투표자 탈락
           majority = 'A'
           const minorityIds = Object.entries(validVotes)
-            .filter(([, choice]) => choice === 'B')
+            .filter(([, c]) => c === 'B')
             .map(([id]) => id)
           eliminatedIds = [...minorityIds, ...nonVoterIds]
+        }
+      } else {
+        // votesB > votesA
+        if (isMinorityMode) {
+          // [소수의 선택 룰]: A(적은 쪽) 생존, B(많은 쪽) + 미투표자 탈락
+          majority = 'A'
+          const majorityIds = Object.entries(validVotes)
+            .filter(([, c]) => c === 'B')
+            .map(([id]) => id)
+          eliminatedIds = [...majorityIds, ...nonVoterIds]
         } else {
-          // B 다수 생존, A 소수 선택자 + 미투표자 탈락
+          // [다수의 선택 룰]: B(많은 쪽) 생존, A(적은 쪽) + 미투표자 탈락
           majority = 'B'
           const minorityIds = Object.entries(validVotes)
-            .filter(([, choice]) => choice === 'A')
+            .filter(([, c]) => c === 'A')
             .map(([id]) => id)
           eliminatedIds = [...minorityIds, ...nonVoterIds]
         }

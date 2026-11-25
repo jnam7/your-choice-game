@@ -814,6 +814,27 @@ export function syncPlugin(): Plugin {
         socket.emit('chat:message', data)
       })
 
+      const handleRuleModeChange = (data: any, callback?: any) => {
+        try {
+          const chId = getEventChannelId(data)
+          const ch = getChannel(chId)
+          const mode = data?.ruleMode || data?.mode || (data === 'minority' ? 'minority' : 'majority')
+          ch.gameState.ruleMode = mode === 'minority' ? 'minority' : 'majority'
+          broadcastState(ch.id)
+          const room = getChannelRoom(ch.id)
+          ioInstance?.to(room).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+          if (ch.id === '1') {
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+          }
+          if (callback) callback({ success: true, ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+        } catch (err: any) {
+          if (callback) callback({ success: false, error: err.message })
+        }
+      }
+
+      socket.on('admin:set_rule_mode', handleRuleModeChange)
+      socket.on('admin:set-rule-mode', handleRuleModeChange)
+
       const handleQrModeChange = (data: any, callback?: any) => {
         try {
           const chId = getEventChannelId(data)
