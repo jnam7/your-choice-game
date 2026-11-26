@@ -279,3 +279,56 @@ export function playGameoverFanfare(): void {
     osc.stop(t + dur)
   })
 }
+
+// 8. 1라운드 및 매 라운드 시작 팡파르/임팩트 사운드 (0초 즉각 재생)
+export function playRoundStartSound(): void {
+  if (isMutedState) return
+  const ctx = getAudioContext()
+  if (!ctx) return
+
+  const now = ctx.currentTime
+  // 웅장하고 선명한 라운드 개시 신호음 (도-미-솔-도 화음 + 브라스 임팩트)
+  const notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.5]
+  notes.forEach((freq, idx) => {
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    const t = now + idx * 0.04
+
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(freq, t)
+
+    gain.gain.setValueAtTime(0.35, t)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5)
+
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+
+    osc.start(t)
+    osc.stop(t + 0.5)
+  })
+}
+
+// 9. 대기실(lobby) 상태에서 게임에 사용되는 모든 오디오 에셋(BGM, 효과음 컨텍스트) 브라우저 메모리에 사전 프리로드 캐싱
+export function preloadAudioAssets(): void {
+  if (typeof window === 'undefined') return
+  try {
+    // 1) Web Audio API 컨텍스트 깨우기 및 워밍업
+    const ctx = getAudioContext()
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {})
+    }
+
+    // 2) BGM 오디오 파일 백그라운드 프리로드 캐싱 (preload="auto")
+    const preAudio = new Audio()
+    preAudio.preload = 'auto'
+    preAudio.src = '/audio/bgm.mp3'
+    preAudio.onerror = () => {
+      preAudio.src = '/bgm.mp3'
+      preAudio.load()
+    }
+    preAudio.load()
+  } catch (err) {
+    console.warn('[Audio Preload Notice]:', err)
+  }
+}
+

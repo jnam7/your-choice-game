@@ -33,11 +33,10 @@ function SoundMuteButton({ className = '' }: { className?: string }) {
   return (
     <button
       onClick={handleToggle}
-      className={`p-2.5 rounded-xl transition-all duration-300 backdrop-blur shadow-lg flex items-center justify-center border ${
-        muted
+      className={`p-2.5 rounded-xl transition-all duration-300 backdrop-blur shadow-lg flex items-center justify-center border ${muted
           ? 'bg-red-950/70 border-red-500/50 text-red-300 hover:bg-red-900/80'
           : 'bg-navy-dark/80 hover:bg-gold hover:text-navy-dark border-gold/30 text-gold'
-      } ${className}`}
+        } ${className}`}
       title={muted ? '소리 켜기' : '소리 끄기 (음소거)'}
     >
       {muted ? (
@@ -118,7 +117,7 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         if (channelId === '1') {
           sessionStorage.setItem('player_session', JSON.stringify(sessionData))
         }
-      } catch (e) {}
+      } catch (e) { }
 
       safeStorage.setItem(`lasttwo_player_id_ch_${channelId}`, localId)
       safeStorage.setItem(`lasttwo_player_nickname_ch_${channelId}`, trimmed)
@@ -144,13 +143,13 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channelId, id: localId, nickname: trimmed }),
-      }).catch(() => {})
+      }).catch(() => { })
 
       fetch(`/api/join?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channelId, id: localId, nickname: trimmed }),
-      }).catch(() => {})
+      }).catch(() => { })
     } catch (err: any) {
       console.error('[NicknameForm handleSubmit error]', err)
       setError(`오류 발생: ${err?.message || err}`)
@@ -260,7 +259,7 @@ function WaitingRoom({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channelId, id: localId, nickname: localNick }),
-      }).catch(() => {})
+      }).catch(() => { })
     }
 
     ensureRegistered()
@@ -461,11 +460,10 @@ function QuestionPreviewScreen({ currentPlayer }: { currentPlayer?: Player | nul
           <span className="px-3 py-1 bg-gold/15 text-gold text-xs rounded-full border border-gold/30 font-bold">
             ROUND {roundNumber} │ {currentQuestion.category}
           </span>
-          <span className={`px-2.5 py-1 text-xs rounded-full border font-bold ${
-            ruleMode === 'minority'
+          <span className={`px-2.5 py-1 text-xs rounded-full border font-bold ${ruleMode === 'minority'
               ? 'bg-purple-950/60 border-purple-400 text-purple-200'
               : 'bg-gold/20 border-gold/40 text-gold-light'
-          }`}>
+            }`}>
             {ruleMode === 'minority' ? '🎯 소수의 선택' : '👥 다수의 선택'}
           </span>
         </div>
@@ -519,7 +517,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   const { currentQuestion, submitVote, currentPlayerId, isPaused, timeLeft, votingDeadline, timeLimit, roundNumber, ruleMode, phase } = useGameStore()
   const rawVotes = useGameStore((s) => s.votes)
   const votes = rawVotes && typeof rawVotes === 'object' ? rawVotes : {}
-  
+
   const isEliminated = Boolean(currentPlayer && (currentPlayer.status === 'eliminated' || currentPlayer.isAlive === false))
 
   const effectiveId = currentPlayer?.id || currentPlayerId || safeStorage.getItem('lasttwo_player_id') || ''
@@ -530,7 +528,7 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   useEffect(() => {
     setSelected(myVote || null)
   }, [currentQuestion?.id, roundNumber, myVote])
-  
+
   const total = timeLimit || 15
   const [remaining, setRemaining] = useState<number>(() => {
     if (votingDeadline) {
@@ -627,11 +625,10 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
           <span className="inline-block px-3 py-0.5 bg-gold/20 text-gold text-xs rounded-full border border-gold/30 font-bold">
             {currentQuestion.category}
           </span>
-          <span className={`inline-block px-2.5 py-0.5 text-xs rounded-full border font-bold ${
-            ruleMode === 'minority'
+          <span className={`inline-block px-2.5 py-0.5 text-xs rounded-full border font-bold ${ruleMode === 'minority'
               ? 'bg-purple-950/60 border-purple-400 text-purple-200'
               : 'bg-gold/20 border-gold/40 text-gold-light'
-          }`}>
+            }`}>
             {ruleMode === 'minority' ? '🎯 소수의 선택' : '👥 다수의 선택'}
           </span>
         </div>
@@ -799,11 +796,10 @@ function ResultScreen() {
             <span className="px-3 py-1 bg-gold/15 text-gold text-xs rounded-full border border-gold/30 font-bold">
               ROUND {roundNumber} 결과 발표
             </span>
-            <span className={`px-2.5 py-1 text-xs rounded-full border font-bold ${
-              result.ruleMode === 'minority'
+            <span className={`px-2.5 py-1 text-xs rounded-full border font-bold ${result.ruleMode === 'minority'
                 ? 'bg-purple-950/60 border-purple-400 text-purple-200'
                 : 'bg-gold/20 border-gold/40 text-gold-light'
-            }`}>
+              }`}>
               {result.ruleMode === 'minority' ? '🎯 소수의 선택 룰' : '👥 다수의 선택 룰'}
             </span>
           </div>
@@ -818,40 +814,36 @@ function ResultScreen() {
         {/* 선택지 비교 박스 */}
         <div className="grid grid-cols-2 gap-2 text-center text-sm font-bold">
           {/* A 박스 */}
-          <div className={`p-3 rounded-xl border transition-all ${
-            result.majority === 'A'
+          <div className={`p-3 rounded-xl border transition-all ${result.majority === 'A'
               ? 'bg-team-a/30 border-red-400 text-white shadow-lg ring-2 ring-team-a'
               : result.majority === 'tie'
                 ? 'bg-team-a/20 border-yellow-500/50 text-white'
                 : 'bg-gray-800/40 border-gray-700 text-gray-400'
-          }`}>
+            }`}>
             <div className="text-xs text-red-300 mb-1">A ({pctA}%)</div>
             <div className="font-display text-base leading-tight">{result.question.optionA}</div>
             <div className="text-xs mt-1 text-gold">{result.votesA}표</div>
             {result.majority === 'A' && (
-              <span className={`inline-block mt-1 px-2 py-0.5 text-white text-[10px] rounded-full font-bold ${
-                result.ruleMode === 'minority' ? 'bg-purple-600' : 'bg-red-500'
-              }`}>
+              <span className={`inline-block mt-1 px-2 py-0.5 text-white text-[10px] rounded-full font-bold ${result.ruleMode === 'minority' ? 'bg-purple-600' : 'bg-red-500'
+                }`}>
                 {result.ruleMode === 'minority' ? '👑 소수 승리' : '👑 다수 승리'}
               </span>
             )}
           </div>
 
           {/* B 박스 */}
-          <div className={`p-3 rounded-xl border transition-all ${
-            result.majority === 'B'
+          <div className={`p-3 rounded-xl border transition-all ${result.majority === 'B'
               ? 'bg-team-b/30 border-blue-400 text-white shadow-lg ring-2 ring-team-b'
               : result.majority === 'tie'
                 ? 'bg-team-b/20 border-yellow-500/50 text-white'
                 : 'bg-gray-800/40 border-gray-700 text-gray-400'
-          }`}>
+            }`}>
             <div className="text-xs text-blue-300 mb-1">B ({pctB}%)</div>
             <div className="font-display text-base leading-tight">{result.question.optionB}</div>
             <div className="text-xs mt-1 text-gold">{result.votesB}표</div>
             {result.majority === 'B' && (
-              <span className={`inline-block mt-1 px-2 py-0.5 text-white text-[10px] rounded-full font-bold ${
-                result.ruleMode === 'minority' ? 'bg-purple-600' : 'bg-blue-500'
-              }`}>
+              <span className={`inline-block mt-1 px-2 py-0.5 text-white text-[10px] rounded-full font-bold ${result.ruleMode === 'minority' ? 'bg-purple-600' : 'bg-blue-500'
+                }`}>
                 {result.ruleMode === 'minority' ? '👑 소수 승리' : '👑 다수 승리'}
               </span>
             )}
@@ -895,11 +887,10 @@ function ResultScreen() {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className={`p-4 rounded-2xl text-center border-2 ${
-            isSurvivor
+          className={`p-4 rounded-2xl text-center border-2 ${isSurvivor
               ? 'bg-gradient-to-br from-green-950/80 to-green-900/40 border-green-500/50 shadow-green-900/30 shadow-lg'
               : 'bg-gradient-to-br from-red-950/80 to-red-900/40 border-red-500/50 shadow-red-900/30 shadow-lg'
-          }`}
+            }`}
         >
           <div className="text-4xl mb-1">
             {isSurvivor ? '🎉' : '💀'}
@@ -979,8 +970,8 @@ function EliminatedScreen() {
               {alivePlayers.length === 0
                 ? '모든 생존자 탈락'
                 : alivePlayers.length === 1
-                ? `단독 우승자: ${alivePlayers[0].nickname}`
-                : `최후의 2인: ${alivePlayers.map((p) => p.nickname).join(', ')}`}
+                  ? `단독 우승자: ${alivePlayers[0].nickname}`
+                  : `최후의 2인: ${alivePlayers.map((p) => p.nickname).join(', ')}`}
             </div>
             <p className="text-xs text-gray-300 mt-1">
               {alivePlayers.length === 0
@@ -1122,7 +1113,7 @@ function clearLocalPlayerSession() {
     if (typeof window !== 'undefined' && window.sessionStorage) {
       window.sessionStorage.clear()
     }
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // ===== 메인 직원 페이지 =====
@@ -1157,7 +1148,7 @@ export default function PlayerPage() {
         const parsed = JSON.parse(raw)
         if (parsed?.playerId && parsed?.nickname) return parsed
       }
-    } catch (e) {}
+    } catch (e) { }
     const sId = safeStorage.getItem(`lasttwo_player_id_ch_${chId}`) || (chId === '1' ? safeStorage.getItem('lasttwo_player_id') : null)
     const sNick = safeStorage.getItem(`lasttwo_player_nickname_ch_${chId}`) || (chId === '1' ? safeStorage.getItem('lasttwo_player_nickname') : null)
     if (sId && sNick) {
@@ -1225,12 +1216,12 @@ export default function PlayerPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channelId: currentChannelId, id: idToLeave }),
-      }).catch(() => {})
+      }).catch(() => { })
       fetch(`/api/leave?channel=${currentChannelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channelId: currentChannelId, id: idToLeave }),
-      }).catch(() => {})
+      }).catch(() => { })
       removePlayer(idToLeave)
     }
 
@@ -1239,7 +1230,7 @@ export default function PlayerPage() {
       if (currentChannelId === '1') {
         sessionStorage.removeItem('player_session')
       }
-    } catch (e) {}
+    } catch (e) { }
     clearLocalPlayerSession()
     clearCurrentPlayer()
     setMyPlayer(null)
@@ -1300,7 +1291,7 @@ export default function PlayerPage() {
         if (currentChannelId === '1') {
           sessionStorage.removeItem('player_session')
         }
-      } catch (e) {}
+      } catch (e) { }
       clearLocalPlayerSession()
       clearCurrentPlayer()
       setMyPlayer(null)
@@ -1330,18 +1321,18 @@ export default function PlayerPage() {
     myPlayer ||
     (sessionUser
       ? {
-          id: sessionUser.playerId,
-          nickname: sessionUser.nickname,
-          status: (sessionUser.status as any) || 'alive',
-          joinedAt: Date.now(),
-        }
+        id: sessionUser.playerId,
+        nickname: sessionUser.nickname,
+        status: (sessionUser.status as any) || 'alive',
+        joinedAt: Date.now(),
+      }
       : (currentChSavedId && currentChSavedNick
         ? {
-            id: currentChSavedId,
-            nickname: currentChSavedNick,
-            status: 'alive',
-            joinedAt: Date.now(),
-          }
+          id: currentChSavedId,
+          nickname: currentChSavedNick,
+          status: 'alive',
+          joinedAt: Date.now(),
+        }
         : null))
 
   // 참가 확정을 하지 않았거나 플레이어 정보가 없으면 닉네임 입력 화면 노출
@@ -1364,7 +1355,7 @@ export default function PlayerPage() {
               if (currentChannelId === '1') {
                 sessionStorage.setItem('player_session', JSON.stringify(sessionData))
               }
-            } catch (e) {}
+            } catch (e) { }
             safeStorage.setItem(`lasttwo_player_id_ch_${currentChannelId}`, p.id)
             safeStorage.setItem(`lasttwo_player_nickname_ch_${currentChannelId}`, p.nickname)
             if (currentChannelId === '1') {

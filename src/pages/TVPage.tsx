@@ -6,7 +6,7 @@ import { socket } from '../socket'
 import { useGameStore } from '../store/gameStore'
 import { useCountdown } from '../hooks/useCountdown'
 import { useSocketSync } from '../hooks/useSocketSync'
-import { getChannelIdFromUrl, buildChannelUrl, AVAILABLE_CHANNELS } from '../utils/channel'
+import { getChannelIdFromUrl, buildChannelUrl } from '../utils/channel'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import type { Player, ChatMessage, GamePhase } from '../types/game'
 import {
@@ -17,6 +17,8 @@ import {
   playDrumRoll,
   playResultReveal,
   playGameoverFanfare,
+  playRoundStartSound,
+  preloadAudioAssets,
   stopAllSounds,
 } from '../utils/sound'
 
@@ -113,18 +115,7 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
   const players = useGameStore((s) => s.players)
   const storeChannelId = useGameStore((s) => s.channelId)
   const channelId = storeChannelId || getChannelIdFromUrl()
-  const setChannelId = useGameStore((s) => s.setChannelId)
   const playerList: Player[] = Array.isArray(players) ? players.filter(Boolean) : (players && typeof players === 'object' ? (Object.values(players).filter(Boolean) as Player[]) : [])
-
-  const handleChannelSwitch = (newCh: string) => {
-    if (channelId === newCh) return
-    setChannelId(newCh)
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href)
-      url.searchParams.set('channel', newCh)
-      window.history.pushState({}, '', url.toString())
-    }
-  }
 
   return (
     <header className="relative flex justify-between items-center w-full px-8 py-4 border-b border-gold/15 bg-navy-dark/40 backdrop-blur z-20">
@@ -136,26 +127,9 @@ function TVHeader({ roundNumber, category, isFinals, customRuleMode }: { roundNu
           YOUR CHOICE
         </span>
 
-        {/* 5개 채널 직접 전환 버튼 그룹 */}
-        <div className="flex items-center bg-navy-dark/90 border border-gold/40 rounded-xl p-1 shadow-lg gap-1">
-          <span className="text-[10px] text-gold/70 font-bold px-1.5 hidden sm:inline">채널</span>
-          {AVAILABLE_CHANNELS.map((ch) => {
-            const isActive = channelId === ch
-            return (
-              <button
-                key={ch}
-                onClick={() => handleChannelSwitch(ch)}
-                className={`px-2.5 py-1 rounded-lg text-xs md:text-sm font-display font-bold transition-all ${
-                  isActive
-                    ? 'bg-gradient-to-r from-gold-dark to-gold text-navy-dark shadow-md scale-105 ring-2 ring-gold/40 font-extrabold'
-                    : 'text-gray-300 hover:text-white hover:bg-gold/15'
-                }`}
-                title={`CH ${ch} (채널 ${ch}번 전광판으로 전환)`}
-              >
-                CH {ch}
-              </button>
-            )
-          })}
+        {/* 현재 채널 표시 뱃지 (단순 텍스트 배지, 클릭/전환 버튼 완전 배제) */}
+        <div className="px-2.5 py-1 bg-navy-dark/90 border border-gold/30 rounded-lg text-xs md:text-sm font-display font-bold text-gold/90 shadow-md">
+          CH {channelId}
         </div>
       </div>
 
@@ -221,6 +195,11 @@ function TVLobby() {
 
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
+
+  // 대기실(lobby) 상태에서 게임 오디오 에셋 브라우저 메모리에 즉시 프리로드 캐싱
+  useEffect(() => {
+    preloadAudioAssets()
+  }, [])
 
   // TV 로비 참가자 실시간 카운트/목록 이벤트 직결 수신
   useEffect(() => {
@@ -485,6 +464,11 @@ function TVQuestion() {
   const roundNumber = useGameStore((s) => s?.roundNumber) || 1
   const isFinals = useGameStore((s) => Boolean(s?.isFinals))
   const ruleMode = useGameStore((s) => s?.ruleMode) || 'majority'
+
+  // 문제 출제(라운드 시작) 즉시 0초 시점에 라운드 시작음 즉각 재생 (지연 제거)
+  useEffect(() => {
+    playRoundStartSound()
+  }, [])
 
   if (!currentQuestion) {
     return (
@@ -1353,9 +1337,11 @@ export default function TVPage() {
     }
   }
 
-  // BGM 오디오 객체 단일 인스턴스 초기화
+  // BGM 오디오 객체 단일 인스턴스 초기화 및 에셋 사전 캐싱
   useEffect(() => {
+    preloadAudioAssets()
     const audio = new Audio('/audio/bgm.mp3')
+    audio.preload = 'auto'
     audio.loop = true
     audio.muted = false
     audio.volume = masterVolume ?? 0.8
@@ -1365,9 +1351,11 @@ export default function TVPage() {
       // /audio/bgm.mp3 실패 시 /bgm.mp3로 fallback
       if (audio.src.includes('/audio/bgm.mp3')) {
         audio.src = '/bgm.mp3'
+        audio.preload = 'auto'
         audio.load()
       }
     }
+    audio.load()
 
     return () => {
       if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
@@ -1401,7 +1389,8 @@ export default function TVPage() {
     }
   }, [timeLeft, phase, masterVolume])
 
-  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지 및 0초 라운드 시작음 즉각 재생
+  const prevPhaseRef = useRef<string>(phase)
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
@@ -1418,14 +1407,18 @@ export default function TVPage() {
 
     // 투표/질문 단계 (voting, question, playing)
     const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+    const wasLobby = prevPhaseRef.current === 'lobby'
+    prevPhaseRef.current = phase
 
     if (isBgmPhase) {
+      // 0초 즉시 라운드 시작 효과음 재생 (대기실에서 시작 또는 문제 단계 진입 시 딜레이 없이 즉각 재생)
+      if (wasLobby || phase === 'question') {
+        playRoundStartSound()
+      }
+
       if (bgmEnabled) {
-        if (audio.paused || !isPlayingRef.current) {
-          playBgm(baseVolume)
-        } else {
-          audio.volume = baseVolume
-        }
+        // 연출 딜레이와 분리하여 0초 시점에 BGM 즉각 재생
+        playBgm(baseVolume)
       }
     } else {
       // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 정지
@@ -1441,6 +1434,7 @@ export default function TVPage() {
   useEffect(() => {
     const handleGesture = () => {
       unlockAudioContext()
+      preloadAudioAssets()
       const audio = bgmRef.current
       if (audio) {
         audio.muted = false
