@@ -1064,10 +1064,11 @@ io.on('connection', (socket) => {
       const ch = getChannel(chId)
       const mode = data?.ruleMode || data?.mode || (data === 'minority' ? 'minority' : 'majority')
       ch.gameState.ruleMode = mode === 'minority' ? 'minority' : 'majority'
-      broadcastState(ch.id)
       const room = getChannelRoom(ch.id)
+      io.to(room).emit('rule_mode_updated', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
       io.to(room).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
       if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('rule_mode_updated', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
         io.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
       }
       console.log(`🎯 [CH ${ch.id} RULE MODE] -> ${ch.gameState.ruleMode}`)
@@ -1233,10 +1234,11 @@ app.post('/api/game/rule-mode', (req, res) => {
     const ch = getChannel(chId)
     const mode = req.body?.ruleMode || req.body?.mode || 'majority'
     ch.gameState.ruleMode = mode === 'minority' ? 'minority' : 'majority'
-    broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('rule_mode_updated', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
     io.to(room).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('rule_mode_updated', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
     }
     res.json({ success: true, ruleMode: ch.gameState.ruleMode, channelId: ch.id })

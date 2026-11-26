@@ -68,7 +68,7 @@ export function useSocketSync() {
         channelId: serverState.channelId || effectiveChannelId,
         phase: serverState.phase,
         roundNumber: serverState.roundNumber,
-        ruleMode: serverState.ruleMode || 'majority',
+        ...(serverState.ruleMode ? { ruleMode: serverState.ruleMode } : {}),
         qrMode: serverState.qrMode || 'wifi',
         ...(serverState.serverHostUrl ? { serverHostUrl: serverState.serverHostUrl } : {}),
         currentQuestion: serverState.currentQuestion,
@@ -214,8 +214,8 @@ export function useSocketSync() {
     const handleRuleModeChanged = (data: any) => {
       if (data?.channelId && data.channelId !== effectiveChannelId) return
       const mode = data?.ruleMode || data?.mode
-      if (mode === 'majority' || mode === 'minority') {
-        useGameStore.getState().setRuleMode(mode)
+      if ((mode === 'majority' || mode === 'minority') && useGameStore.getState().ruleMode !== mode) {
+        useGameStore.setState({ ruleMode: mode })
       }
     }
 
@@ -244,6 +244,8 @@ export function useSocketSync() {
     socket.on('game:resumed', handleResumed)
     socket.on('server:tunnel_updated', handleTunnelUpdated)
     socket.on('game:rule_mode_changed', handleRuleModeChanged)
+    socket.on('rule_mode_changed', handleRuleModeChanged)
+    socket.on('rule_mode_updated', handleRuleModeChanged)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
@@ -276,6 +278,8 @@ export function useSocketSync() {
       socket.off('players:update', handlePlayersUpdate)
       socket.off('game:round_started', handleRoundStarted)
       socket.off('game:rule_mode_changed', handleRuleModeChanged)
+      socket.off('rule_mode_changed', handleRuleModeChanged)
+      socket.off('rule_mode_updated', handleRuleModeChanged)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
       socket.off('qr:change', handleQrModeChanged)
       socket.off('qr:changed', handleQrModeChanged)

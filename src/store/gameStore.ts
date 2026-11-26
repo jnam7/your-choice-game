@@ -351,16 +351,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     // ===== 룰 모드 설정 (다수의 선택 vs 소수의 선택) =====
     setRuleMode: (mode: RuleMode) => {
-      const channelId = get().channelId || '1'
+      if (get().ruleMode === mode) return
       set({ ruleMode: mode })
-      socket.emit('admin:set_rule_mode', { channelId, ruleMode: mode })
-      socket.emit('admin:set-rule-mode', { channelId, ruleMode: mode })
-      socket.emit('admin:sync', { channelId, ruleMode: mode })
-      fetch(`/api/game/rule-mode?channel=${channelId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelId, ruleMode: mode }),
-      }).catch(() => {})
       persist()
     },
 
@@ -1134,6 +1126,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       if (serverData.phase === 'lobby' && (serverData.roundNumber === 0 || !serverData.roundNumber)) {
         serverData.votes = serverData.votes || {}
         serverData.currentResult = null
+      }
+      // 동일한 ruleMode인 경우 불필요한 재렌더/상태 덮어쓰기 방지
+      if (serverData.ruleMode && serverData.ruleMode === get().ruleMode) {
+        delete serverData.ruleMode
       }
       set((state) => ({
         ...state,

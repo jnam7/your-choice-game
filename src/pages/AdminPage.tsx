@@ -114,6 +114,12 @@ export default function AdminPage() {
     }
   }
 
+  const handleRuleChange = (newMode: 'majority' | 'minority') => {
+    if (ruleMode === newMode) return
+    setRuleMode(newMode)
+    socket.emit('admin:set_rule_mode', { channelId, ruleMode: newMode })
+  }
+
   // 관리자 화면 참가자 입장/갱신 이벤트 직결 수신
   useEffect(() => {
     const handlePlayersUpdate = (data: any) => {
@@ -543,7 +549,7 @@ export default function AdminPage() {
                   <div className="flex items-center gap-1.5 text-xs">
                     <span className="text-gray-400 mr-1 font-bold">생존 룰:</span>
                     <button
-                      onClick={() => setRuleMode('majority')}
+                      onClick={() => handleRuleChange('majority')}
                       disabled={phase !== 'lobby'}
                       className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
                         ruleMode === 'majority'
@@ -555,7 +561,7 @@ export default function AdminPage() {
                       <span>👥 다수의 선택</span>
                     </button>
                     <button
-                      onClick={() => setRuleMode('minority')}
+                      onClick={() => handleRuleChange('minority')}
                       disabled={phase !== 'lobby'}
                       className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
                         ruleMode === 'minority'
