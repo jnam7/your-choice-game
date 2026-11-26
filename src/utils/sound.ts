@@ -7,6 +7,71 @@ let isMutedState = false
 const soundInstances: Record<string, HTMLAudioElement> = {}
 const activeAudioNodes = new Set<{ stop?: (when?: number) => void; disconnect: () => void }>()
 
+// =========================================================
+// 전역 단일 BGM 플레이어 (시스템 전체에 단 1개만 존재 - 돌림노래 현상 원천 차단)
+// =========================================================
+let globalBgmPlayer: HTMLAudioElement | null = null
+let currentPlayingTrack: string = ''
+
+export const getBgmPlayer = (): HTMLAudioElement | null => {
+  if (!globalBgmPlayer && typeof window !== 'undefined') {
+    globalBgmPlayer = new Audio()
+    globalBgmPlayer.loop = true
+    globalBgmPlayer.muted = isMutedState
+    globalBgmPlayer.volume = isMutedState ? 0 : masterVolumeState
+  }
+  return globalBgmPlayer
+}
+
+export const playBGM = (trackUrl: string, volume: number = 0.8): void => {
+  const player = getBgmPlayer()
+  if (!player) return
+
+  const effectiveVol = isMutedState ? 0 : Math.max(0, Math.min(1, volume))
+
+  // 이미 같은 트랙이 재생 중이면 중복 실행 완전 무시 (시간차 겹침 현상 원천 차단)
+  if (currentPlayingTrack === trackUrl && !player.paused) {
+    player.muted = isMutedState
+    player.volume = effectiveVol
+    return
+  }
+
+  try {
+    player.pause() // 이전 곡 즉시 정지
+    player.currentTime = 0
+    player.src = trackUrl // 음원 교체
+    player.muted = isMutedState
+    player.volume = effectiveVol
+    currentPlayingTrack = trackUrl
+
+    const playPromise = player.play()
+    if (playPromise !== undefined) {
+      playPromise.catch((e) => console.warn('BGM 재생 대기/차단:', e))
+    }
+  } catch (e) {
+    console.error('BGM 재생 에러:', e)
+  }
+}
+
+export const stopBGM = (): void => {
+  if (globalBgmPlayer) {
+    try {
+      globalBgmPlayer.pause()
+      globalBgmPlayer.currentTime = 0
+      globalBgmPlayer.removeAttribute('src')
+    } catch {}
+    currentPlayingTrack = ''
+  }
+}
+
+export const setBgmVolume = (volume: number): void => {
+  if (globalBgmPlayer) {
+    const effectiveVol = isMutedState ? 0 : Math.max(0, Math.min(1, volume))
+    globalBgmPlayer.muted = isMutedState
+    globalBgmPlayer.volume = effectiveVol
+  }
+}
+
 // 초기 음소거 설정 로컬스토리지에서 복구 (단, false 기본값 보장)
 if (typeof window !== 'undefined') {
   try {
@@ -69,6 +134,10 @@ export function getAudioInstances(): Record<string, HTMLAudioElement> {
 export function setMasterVolume(vol: number): void {
   masterVolumeState = Math.max(0, Math.min(1, vol))
   const finalVol = isMutedState ? 0 : masterVolumeState
+  if (globalBgmPlayer) {
+    globalBgmPlayer.muted = isMutedState
+    globalBgmPlayer.volume = finalVol
+  }
   Object.values(soundInstances).forEach((audio) => {
     try {
       audio.muted = isMutedState
@@ -92,6 +161,10 @@ export function isSoundMuted(): boolean {
 export function setSoundMuted(muted: boolean): void {
   isMutedState = muted
   const finalVol = muted ? 0 : masterVolumeState
+  if (globalBgmPlayer) {
+    globalBgmPlayer.muted = muted
+    globalBgmPlayer.volume = finalVol
+  }
   Object.values(soundInstances).forEach((audio) => {
     try {
       audio.muted = muted
@@ -124,12 +197,15 @@ export const cleanupAndStopAudio = (audio: HTMLAudioElement | null): void => {
 
 // 모든 활성 오디오 노드 및 인스턴스 강제 정지 및 초기화 (사운드 겹침 폭발 및 버퍼 잔향 원천 차단)
 export function stopAllSounds(): void {
-  // 1) 등록된 모든 HTMLAudioElement 인스턴스 완전 음소거 및 버퍼 정리
+  // 1) 전역 싱글톤 BGM 정지
+  stopBGM()
+
+  // 2) 등록된 모든 HTMLAudioElement 인스턴스 완전 음소거 및 버퍼 정리
   Object.values(soundInstances).forEach((audio) => {
     cleanupAndStopAudio(audio)
   })
 
-  // 2) 현재 활성 상태의 모든 Web Audio Oscillator 노드 즉시 중단 및 연결 해제
+  // 3) 현재 활성 상태의 모든 Web Audio Oscillator 노드 즉시 중단 및 연결 해제
   activeAudioNodes.forEach((node) => {
     try {
       if (typeof node.stop === 'function') {

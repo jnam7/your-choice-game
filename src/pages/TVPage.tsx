@@ -25,6 +25,9 @@ import {
   unregisterAudioInstance,
   setMasterVolume as setSoundMasterVolume,
   setSoundMuted,
+  playBGM,
+  stopBGM,
+  setBgmVolume,
 } from '../utils/sound'
 
 // ===== 관리자 페이지 이동 톱니바퀴 버튼 =====
@@ -1281,9 +1284,7 @@ export default function TVPage() {
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
   const qrMode = useGameStore((s) => s.qrMode)
 
-  // BGM 오디오 인스턴스 및 상태 제어
-  const bgmRef = useRef<HTMLAudioElement | null>(null)
-  const isPlayingRef = useRef<boolean>(false)
+  // BGM 상태 제어 (전역 싱글톤 playBGM/stopBGM 사용 - 돌림노래 현상 원천 차단)
   const [bgmEnabled, setBgmEnabled] = useState<boolean>(true)
   const storeMasterVolume = useGameStore((s) => s.masterVolume ?? 0.8)
   const storeIsMuted = useGameStore((s) => Boolean(s.isMuted))
@@ -1294,19 +1295,16 @@ export default function TVPage() {
   useEffect(() => {
     setMasterVolume(storeMasterVolume)
     setSoundMasterVolume(storeMasterVolume)
+    setBgmVolume(storeMasterVolume)
   }, [storeMasterVolume])
 
   useEffect(() => {
     setIsMuted(storeIsMuted)
     setSoundMuted(storeIsMuted)
-    const audio = bgmRef.current
-    if (audio) {
-      audio.muted = storeIsMuted
-      audio.volume = storeIsMuted ? 0 : storeMasterVolume
-    }
+    setBgmVolume(storeIsMuted ? 0 : storeMasterVolume)
   }, [storeIsMuted, storeMasterVolume])
 
-  // BGM 오디오 객체 및 타이머 참조
+  // BGM 오디오 타이머 참조
   const fadeIntervalRef = useRef<any>(null)
   const lastTickSecondRef = useRef<number>(-1)
 
@@ -1318,15 +1316,12 @@ export default function TVPage() {
         const vol = Math.max(0, Math.min(1, rawVol))
         setMasterVolume(vol)
         setSoundMasterVolume(vol)
+        setBgmVolume(vol)
       }
       if (typeof data?.isMuted === 'boolean') {
         setIsMuted(data.isMuted)
         setSoundMuted(data.isMuted)
-        const audio = bgmRef.current
-        if (audio) {
-          audio.muted = data.isMuted
-          audio.volume = data.isMuted ? 0 : (masterVolume ?? 0.8)
-        }
+        setBgmVolume(data.isMuted ? 0 : (masterVolume ?? 0.8))
       }
     }
 
@@ -1335,19 +1330,17 @@ export default function TVPage() {
         const vol = Math.max(0, Math.min(1, state.masterVolume))
         setMasterVolume(vol)
         setSoundMasterVolume(vol)
+        setBgmVolume(vol)
       } else if (typeof state?.bgmVolume === 'number') {
         const vol = Math.max(0, Math.min(1, state.bgmVolume))
         setMasterVolume(vol)
         setSoundMasterVolume(vol)
+        setBgmVolume(vol)
       }
       if (typeof state?.isMuted === 'boolean') {
         setIsMuted(state.isMuted)
         setSoundMuted(state.isMuted)
-        const audio = bgmRef.current
-        if (audio) {
-          audio.muted = state.isMuted
-          audio.volume = state.isMuted ? 0 : (masterVolume ?? 0.8)
-        }
+        setBgmVolume(state.isMuted ? 0 : (masterVolume ?? 0.8))
       }
     }
 
@@ -1366,90 +1359,21 @@ export default function TVPage() {
     }
   }, [masterVolume])
 
-  // 안정적인 BGM 재생 헬퍼 함수 (0.1초 찌꺼기 팝 노이즈 및 버퍼 잔향 원천 차단)
-  const playBgm = (targetVolume?: number) => {
-    let audio = bgmRef.current
-    if (!audio) {
-      audio = new Audio('/sounds/game_start.mp3')
-      audio.preload = 'auto'
-      audio.loop = true
-      bgmRef.current = audio
-      registerAudioInstance('bgm', audio)
-    }
-
-    const targetVol = isMuted ? 0 : (typeof targetVolume === 'number' ? targetVolume : (masterVolume ?? 0.8))
-
-    // 새 BGM 재생 전 볼륨을 0으로 강제 음소거 후 0초 재생 지점 설정
-    audio.volume = 0
-    audio.muted = true
-    try {
-      if (!audio.getAttribute('src')) {
-        audio.src = '/sounds/game_start.mp3'
-        audio.load()
-      }
-      audio.currentTime = 0
-    } catch {}
-
-    const playPromise = audio.play()
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          isPlayingRef.current = true
-          // 0초 지점 확인 후 목표 마스터 볼륨 안전 적용
-          audio.currentTime = 0
-          audio.muted = isMuted
-          audio.volume = targetVol
-        })
-        .catch((err) => {
-          isPlayingRef.current = false
-          console.warn('[TV BGM Autoplay 대기 - 화면 클릭 시 즉시 재생]:', err?.message)
-        })
-    }
-  }
-
-  // BGM 오디오 객체 단일 인스턴스 초기화 및 에셋 사전 캐싱 (game_start.mp3 사전 로드)
+  // 컴포넌트 언마운트 시 전역 BGM 정지
   useEffect(() => {
-    unlockAudioContext()
-    preloadAudioAssets()
-    const audio = new Audio('/sounds/game_start.mp3')
-    audio.preload = 'auto'
-    audio.loop = true
-    audio.muted = isMuted
-    audio.volume = isMuted ? 0 : (masterVolume ?? 0.8)
-    bgmRef.current = audio
-    registerAudioInstance('bgm', audio)
-
-    audio.onerror = () => {
-      // /sounds/game_start.mp3 실패 시 /audio/bgm.mp3 -> /bgm.mp3로 fallback
-      if (audio.src.includes('/sounds/game_start.mp3')) {
-        audio.src = '/audio/bgm.mp3'
-        audio.preload = 'auto'
-        audio.load()
-      } else if (audio.src.includes('/audio/bgm.mp3')) {
-        audio.src = '/bgm.mp3'
-        audio.preload = 'auto'
-        audio.load()
-      }
-    }
-    audio.load()
-
     return () => {
-      unregisterAudioInstance('bgm')
+      stopBGM()
       if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
-      cleanupAndStopAudio(audio)
-      isPlayingRef.current = false
-      bgmRef.current = null
     }
   }, [])
 
-  // 소켓 이벤트(게임 시작/라운드 시작) 수신 즉시 0초 딜레이 없는 오디오 즉각 재생
+  // 소켓 이벤트(게임 시작/라운드 시작) 수신 즉시 0초 딜레이 없는 오디오 단일 재생 (돌림노래 방지)
   useEffect(() => {
     const handleImmediateRoundAudio = () => {
       unlockAudioContext()
-      // 게임/라운드 시작 시 기존에 울리던 모든 효과음 및 BGM 잔향 즉시 강제 정지
-      stopAllSounds()
-      cleanupAndStopAudio(bgmRef.current)
-      playBgm(isMuted ? 0 : (masterVolume ?? 0.8))
+      if (bgmEnabled) {
+        playBGM('/sounds/game_start.mp3', isMuted ? 0 : (masterVolume ?? 0.8))
+      }
     }
 
     socket.on('game:round_started', handleImmediateRoundAudio)
@@ -1461,19 +1385,17 @@ export default function TVPage() {
       socket.off('game:voting_started', handleImmediateRoundAudio)
       socket.off('start_voting', handleImmediateRoundAudio)
     }
-  }, [masterVolume, isMuted])
+  }, [masterVolume, isMuted, bgmEnabled])
 
   // 3. 남은 시간 5초 이하 시 BGM 볼륨 25% 자동 감쇠 (Audio Ducking) 적용
   useEffect(() => {
-    const audio = bgmRef.current
-    if (!audio || phase !== 'voting') return
+    if (phase !== 'voting') return
 
     const baseVolume = isMuted ? 0 : (masterVolume ?? 0.8)
-    audio.muted = isMuted
 
     if (timeLeft <= 5 && timeLeft > 0) {
       // 5초 이하 구간: 기존 볼륨의 25% 수준으로 하향
-      audio.volume = isMuted ? 0 : Math.max(0.05, baseVolume * 0.25)
+      setBgmVolume(isMuted ? 0 : Math.max(0.05, baseVolume * 0.25))
 
       // 매 초 초침 효과음 1회 재생
       if (lastTickSecondRef.current !== timeLeft) {
@@ -1481,47 +1403,34 @@ export default function TVPage() {
         playCountdownTick(timeLeft <= 3)
       }
     } else if (timeLeft > 5) {
-      audio.volume = baseVolume
+      setBgmVolume(baseVolume)
       lastTickSecondRef.current = -1
     }
   }, [timeLeft, phase, masterVolume, isMuted])
 
-  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 전역 BGM 재생/정지
   const prevPhaseRef = useRef<string>(phase)
   useEffect(() => {
-    const audio = bgmRef.current
-    if (!audio) return
-
     const baseVolume = isMuted ? 0 : (masterVolume ?? 0.8)
-    audio.muted = isMuted
 
     // 일시정지 상태인 경우 BGM 즉시 일시정지
     if (isPaused) {
-      audio.pause()
-      isPlayingRef.current = false
+      stopBGM()
       return
     }
 
     // 투표/질문 단계 (voting, question, playing)
     const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-    const wasLobby = prevPhaseRef.current === 'lobby'
     prevPhaseRef.current = phase
 
     if (isBgmPhase) {
-      // 라운드 진입 시 모든 기존 효과음 정지 및 이전 오디오 버퍼 조각 완전 정리 후 순수 BGM만 재생
-      if (wasLobby || phase === 'question') {
-        stopAllSounds()
-        cleanupAndStopAudio(bgmRef.current)
-      }
-
       if (bgmEnabled) {
-        // 0초 시점에 BGM 즉각 재생
-        playBgm(baseVolume)
+        // 단일 전역 BGM 플레이어로 재생 (이미 재생 중이면 중복 실행 무시됨)
+        playBGM('/sounds/game_start.mp3', baseVolume)
       }
     } else {
-      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 버퍼 강제 해제 정지
-      cleanupAndStopAudio(audio)
-      isPlayingRef.current = false
+      // 투표가 종료되거나 다른 단계(revealing, result, elimination, gameover, lobby)로 넘어가면 정지
+      stopBGM()
       lastTickSecondRef.current = -1
     }
   }, [phase, isPaused, bgmEnabled, masterVolume, isMuted])
@@ -1531,24 +1440,21 @@ export default function TVPage() {
     const handleGesture = () => {
       unlockAudioContext()
       preloadAudioAssets()
-      const audio = bgmRef.current
-      if (audio) {
-        audio.muted = false
-        const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
-        if (isBgmPhase && bgmEnabled && (audio.paused || !isPlayingRef.current)) {
-          playBgm(masterVolume ?? 0.8)
-        }
+      const isBgmPhase = phase === 'voting' || phase === 'question' || (phase as string) === 'playing'
+      if (isBgmPhase && bgmEnabled) {
+        playBGM('/sounds/game_start.mp3', isMuted ? 0 : (masterVolume ?? 0.8))
       }
     }
     window.addEventListener('click', handleGesture, { passive: true })
     window.addEventListener('pointerdown', handleGesture, { passive: true })
     window.addEventListener('keydown', handleGesture, { passive: true })
+
     return () => {
       window.removeEventListener('click', handleGesture)
       window.removeEventListener('pointerdown', handleGesture)
       window.removeEventListener('keydown', handleGesture)
     }
-  }, [phase, bgmEnabled, masterVolume])
+  }, [phase, bgmEnabled, masterVolume, isMuted])
 
   // 서버 정보 및 외부 터널 URL 실시간 연동 (3번 서바이벌 퀴즈 방식)
   useEffect(() => {
