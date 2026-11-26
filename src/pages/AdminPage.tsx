@@ -212,7 +212,7 @@ export default function AdminPage() {
           setCustomUrlInput(info.publicUrl)
         }
       })
-      .catch(() => {})
+      .catch(() => { })
 
     // 2. 소켓 터널 URL 업데이트 이벤트 실시간 수신
     const handleTunnelUpdated = (newUrl: string) => {
@@ -450,11 +450,10 @@ export default function AdminPage() {
                 <button
                   key={ch}
                   onClick={() => handleChannelSwitch(ch)}
-                  className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
-                    isCurrent
+                  className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${isCurrent
                       ? 'bg-gold text-navy-dark shadow font-extrabold scale-105'
                       : 'text-gray-400 hover:text-white hover:bg-gold/10'
-                  }`}
+                    }`}
                   title={`${ch}채널로 전환하여 독립 제어`}
                 >
                   {ch}채널
@@ -466,17 +465,15 @@ export default function AdminPage() {
           <div className="flex bg-navy rounded-lg p-1 border border-gold/20">
             <button
               onClick={() => setActiveTab('control')}
-              className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
-                activeTab === 'control' ? 'bg-gold text-navy-dark shadow' : 'text-gray-400 hover:text-white'
-              }`}
+              className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'control' ? 'bg-gold text-navy-dark shadow' : 'text-gray-400 hover:text-white'
+                }`}
             >
               🎮 게임 제어
             </button>
             <button
               onClick={() => setActiveTab('questions')}
-              className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
-                activeTab === 'questions' ? 'bg-gold text-navy-dark shadow' : 'text-gray-400 hover:text-white'
-              }`}
+              className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'questions' ? 'bg-gold text-navy-dark shadow' : 'text-gray-400 hover:text-white'
+                }`}
             >
               📝 문제 관리 ({questionsList.length})
             </button>
@@ -559,11 +556,10 @@ export default function AdminPage() {
                     <button
                       onClick={() => handleRuleChange('majority')}
                       disabled={phase !== 'lobby'}
-                      className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
-                        ruleMode === 'majority'
+                      className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${ruleMode === 'majority'
                           ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-navy-dark shadow-md shadow-yellow-500/30'
                           : 'bg-navy border border-gold/20 text-gray-300 hover:text-white'
-                      }`}
+                        }`}
                       title={phase !== 'lobby' ? '게임 진행 중에는 룰을 변경할 수 없습니다' : '다수의 선택 모드로 전환'}
                     >
                       <span>👥 다수의 선택</span>
@@ -571,11 +567,10 @@ export default function AdminPage() {
                     <button
                       onClick={() => handleRuleChange('minority')}
                       disabled={phase !== 'lobby'}
-                      className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
-                        ruleMode === 'minority'
+                      className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${ruleMode === 'minority'
                           ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-md shadow-purple-500/30'
                           : 'bg-navy border border-gold/20 text-gray-300 hover:text-white'
-                      }`}
+                        }`}
                       title={phase !== 'lobby' ? '게임 진행 중에는 룰을 변경할 수 없습니다' : '소수의 선택 모드로 전환'}
                     >
                       <span>🎯 소수의 선택</span>
@@ -590,11 +585,10 @@ export default function AdminPage() {
                         key={sec}
                         onClick={() => setTimeLimit(sec)}
                         disabled={phase === 'voting'}
-                        className={`px-2 py-1 rounded font-bold transition-all ${
-                          timeLimit === sec
+                        className={`px-2 py-1 rounded font-bold transition-all ${timeLimit === sec
                             ? 'bg-gold text-navy-dark'
                             : 'bg-navy border border-gold/20 text-gray-300 hover:text-white'
-                        }`}
+                          }`}
                       >
                         {sec}초
                       </button>
@@ -624,11 +618,10 @@ export default function AdminPage() {
               </div>
 
               {/* 현재 적용 중인 룰 안내 배너 */}
-              <div className={`mb-4 px-3 py-2 rounded-lg text-xs flex items-center justify-between border ${
-                ruleMode === 'minority'
+              <div className={`mb-4 px-3 py-2 rounded-lg text-xs flex items-center justify-between border ${ruleMode === 'minority'
                   ? 'bg-purple-950/40 border-purple-500/40 text-purple-200'
                   : 'bg-gold/10 border-gold/30 text-gold-light'
-              }`}>
+                }`}>
                 <div className="flex items-center gap-2">
                   <span className="font-bold">
                     {ruleMode === 'minority' ? '🎯 [소수의 선택 룰 적용 중]' : '👥 [다수의 선택 룰 적용 중]'}
@@ -865,10 +858,9 @@ export default function AdminPage() {
                     </div>
 
                     <div className="text-center pt-3 border-t border-gold/10">
-                      <span className={`text-lg font-bold ${
-                        currentResult.majority === 'tie' ? 'text-gold' :
-                        currentResult.majority === 'A' ? 'text-team-a' : 'text-team-b'
-                      }`}>
+                      <span className={`text-lg font-bold ${currentResult.majority === 'tie' ? 'text-gold' :
+                          currentResult.majority === 'A' ? 'text-team-a' : 'text-team-b'
+                        }`}>
                         {currentResult.majority === 'tie'
                           ? '⚖️ 동률! 투표 참여자 전원 생존'
                           : currentResult.ruleMode === 'minority'
@@ -895,11 +887,10 @@ export default function AdminPage() {
                     <div className="flex gap-3">
                       <button
                         onClick={nextRound}
-                        className={`flex-1 py-4 font-display text-xl md:text-2xl rounded-xl hover:shadow-lg transition-all font-bold ${
-                          currentResult.survivors.length <= 2 && currentResult.survivors.length > 0
+                        className={`flex-1 py-4 font-display text-xl md:text-2xl rounded-xl hover:shadow-lg transition-all font-bold ${currentResult.survivors.length <= 2 && currentResult.survivors.length > 0
                             ? 'bg-gradient-to-r from-yellow-500 via-amber-400 to-yellow-300 text-navy-dark shadow-amber-500/40 ring-4 ring-yellow-400/40 animate-pulse'
                             : 'bg-gradient-to-r from-gold-dark via-gold to-gold-light text-navy-dark hover:shadow-gold/30'
-                        }`}
+                          }`}
                       >
                         {currentResult.survivors.length <= 2 && currentResult.survivors.length > 0
                           ? `🏆 즉시 최종 결과 발표 & 경기 종료 (${currentResult.survivors.length}명 우승)`
@@ -907,11 +898,10 @@ export default function AdminPage() {
                       </button>
                       <button
                         onClick={() => setAutoAdvance(!autoAdvance)}
-                        className={`px-4 py-4 rounded-xl font-bold text-xs md:text-sm border transition-all ${
-                          autoAdvance
+                        className={`px-4 py-4 rounded-xl font-bold text-xs md:text-sm border transition-all ${autoAdvance
                             ? 'bg-green-950/50 border-green-500/60 text-green-300'
                             : 'bg-gray-800 border-gray-600 text-gray-400'
-                        }`}
+                          }`}
                         title="자동 라운드 진행 켜기/끄기"
                       >
                         {autoAdvance ? '⚡ 자동진행: ON' : '⏸️ 자동진행: OFF'}
@@ -1061,11 +1051,10 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={() => handleUpdateQrMode('wifi')}
-                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    (qrMode || 'wifi') === 'wifi'
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${(qrMode || 'wifi') === 'wifi'
                       ? 'bg-emerald-500 text-navy-dark border-emerald-400 shadow-lg shadow-emerald-500/30 font-extrabold'
                       : 'bg-navy-dark border-emerald-500/30 text-gray-300 hover:text-white'
-                  }`}
+                    }`}
                 >
                   📶 사내 Wi-Fi (로컬 IP)
                 </button>
@@ -1073,11 +1062,10 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={() => handleUpdateQrMode('tunnel')}
-                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    qrMode === 'tunnel'
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold border transition-all ${qrMode === 'tunnel'
                       ? 'bg-gold text-navy-dark border-gold shadow-lg shadow-gold/30 font-extrabold'
                       : 'bg-navy-dark border-gold/30 text-gray-300 hover:text-white'
-                  }`}
+                    }`}
                 >
                   🌍 터널/외부 접속 (배포 URL) {lteUrl ? '🟢' : '⏳'}
                 </button>
@@ -1170,11 +1158,10 @@ export default function AdminPage() {
               <div className="mt-3.5 flex flex-col sm:flex-row gap-2 justify-center">
                 <button
                   onClick={handleDownloadQR}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow ${
-                    adminQrTab === 'wifi'
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow ${adminQrTab === 'wifi'
                       ? 'bg-emerald-500 text-navy-dark hover:bg-emerald-400'
                       : 'bg-gold text-navy-dark hover:bg-gold-light'
-                  }`}
+                    }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1221,19 +1208,17 @@ export default function AdminPage() {
                         }`}
                     >
                       <div className="flex items-center gap-2">
-                        <div className={`w-2.5 h-2.5 rounded-full ${
-                          player.status === 'alive' ? 'bg-green-400 shadow-sm shadow-green-400' : 'bg-red-500'
-                        }`} />
+                        <div className={`w-2.5 h-2.5 rounded-full ${player.status === 'alive' ? 'bg-green-400 shadow-sm shadow-green-400' : 'bg-red-500'
+                          }`} />
                         <span className={player.status === 'alive' ? 'font-medium' : 'line-through text-gray-500'}>
                           {player.nickname}
                         </span>
                       </div>
                       {player.status === 'alive' && votes[player.id] && (
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded font-mono ${
-                          votes[player.id] === 'A'
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded font-mono ${votes[player.id] === 'A'
                             ? 'bg-team-a/20 text-team-a-light border border-team-a/40'
                             : 'bg-team-b/20 text-team-b-light border border-team-b/40'
-                        }`}>
+                          }`}>
                           {votes[player.id]}
                         </span>
                       )}
@@ -1313,11 +1298,10 @@ export default function AdminPage() {
             {questionsList.map((q, idx) => (
               <div
                 key={q.id}
-                className={`p-4 rounded-xl border transition-all ${
-                  q.isFinals
+                className={`p-4 rounded-xl border transition-all ${q.isFinals
                     ? 'bg-orange-950/25 border-orange-500/40'
                     : 'bg-navy-dark/90 border-gold/15'
-                }`}
+                  }`}
               >
                 <div className="flex justify-between items-center mb-2.5">
                   <div className="flex items-center gap-2">

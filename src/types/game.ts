@@ -18,6 +18,7 @@ export interface Player {
   eliminatedRound?: number
   isDummy?: boolean
   isAlive?: boolean
+  socketId?: string
 }
 
 export type RuleMode = 'majority' | 'minority'

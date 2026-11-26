@@ -106,7 +106,20 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
         joinedAt: Date.now(),
       }
 
-      // 1. 로컬 스토리지에 플레이어 식별 정보 즉시 저장 및 로컬 스토어에 추가
+      // 1. 세션 및 로컬 스토리지에 플레이어 식별 정보 즉시 보존
+      const sessionData = {
+        playerId: localId,
+        nickname: trimmed,
+        channelId,
+        status: 'alive' as const,
+      }
+      try {
+        sessionStorage.setItem(`player_session_${channelId}`, JSON.stringify(sessionData))
+        if (channelId === '1') {
+          sessionStorage.setItem('player_session', JSON.stringify(sessionData))
+        }
+      } catch (e) {}
+
       safeStorage.setItem(`lasttwo_player_id_ch_${channelId}`, localId)
       safeStorage.setItem(`lasttwo_player_nickname_ch_${channelId}`, trimmed)
       if (channelId === '1') {
@@ -1135,53 +1148,77 @@ export default function PlayerPage() {
   const savedId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
   const savedNickname = safeStorage.getItem(`lasttwo_player_nickname_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_nickname')
 
-  // 1. 이번 브라우저 세션에서 사용자가 직접 '참가하기' 버튼을 눌렀는지 여부
-  // 대기실(lobby)이거나 게임 진행 중이 아닐 때는 무조건 false 및 로컬 세션 삭제!
-  // 오직 실제 문제 풀이/투표 진행 중(phase === 'question' || 'voting')일 때만 예외적으로 복원 허용
-  const [hasConfirmedJoin, setHasConfirmedJoin] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    if (!isPlayPhase) {
-      clearLocalPlayerSession()
-      return false
+  // 0. 참가자 세션 복원 헬퍼
+  const getPlayerSession = (chId: string) => {
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = sessionStorage.getItem(`player_session_${chId}`) || (chId === '1' ? sessionStorage.getItem('player_session') : null)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed?.playerId && parsed?.nickname) return parsed
+      }
+    } catch (e) {}
+    const sId = safeStorage.getItem(`lasttwo_player_id_ch_${chId}`) || (chId === '1' ? safeStorage.getItem('lasttwo_player_id') : null)
+    const sNick = safeStorage.getItem(`lasttwo_player_nickname_ch_${chId}`) || (chId === '1' ? safeStorage.getItem('lasttwo_player_nickname') : null)
+    if (sId && sNick) {
+      return { playerId: sId, nickname: sNick, channelId: chId, status: 'alive' as const }
     }
-    return Boolean(savedId && savedNickname)
-  })
+    return null
+  }
+
+  const initialSession = getPlayerSession(currentChannelId)
+
+  // 1. 세션 존재 시 닉네임 입력 단계 건너뛰기 보장
+  const [hasConfirmedJoin, setHasConfirmedJoin] = useState<boolean>(() => Boolean(initialSession))
 
   const [myPlayer, setMyPlayer] = useState<Player | null>(() => {
-    if (typeof window === 'undefined') return null
-    if (!isPlayPhase) return null
-    if (savedId && savedNickname) {
-      return { id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() }
+    if (initialSession) {
+      return {
+        id: initialSession.playerId,
+        nickname: initialSession.nickname,
+        status: (initialSession.status as any) || 'alive',
+        joinedAt: Date.now(),
+      }
     }
     return null
   })
 
-  // 대기실(lobby) 상태 감지 시, 아직 참가 확정을 하지 않았다면 남아있는 로컬스토리지 강제 삭제
+  // 마운트 시 세션 복구 및 소켓 재접속 전송
   useEffect(() => {
-    if (phase === 'lobby') {
-      const sId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
-      if (sId && !hasConfirmedJoin) {
-        clearLocalPlayerSession()
-        clearCurrentPlayer()
-        setMyPlayer(null)
-      }
-    }
-  }, [phase, hasConfirmedJoin, clearCurrentPlayer, currentChannelId])
+    const session = getPlayerSession(currentChannelId)
+    if (session) {
+      setHasConfirmedJoin(true)
+      setCurrentPlayer(session.playerId)
+      setMyPlayer((prev) => prev || {
+        id: session.playerId,
+        nickname: session.nickname,
+        status: (session.status as any) || 'alive',
+        joinedAt: Date.now(),
+      })
 
-  // 실제 문제 풀이/투표 중(isPlayPhase)일 때만 저장된 정보 복구
-  useEffect(() => {
-    if (isPlayPhase && savedId && savedNickname) {
-      if (!hasConfirmedJoin) setHasConfirmedJoin(true)
-      if (!myPlayer) {
-        setMyPlayer({ id: savedId, nickname: savedNickname, status: 'alive', joinedAt: Date.now() })
-        setCurrentPlayer(savedId)
-      }
+      // 서버 측 세션 복구 신호 전송
+      socket.emit('player:reconnect', {
+        channelId: currentChannelId,
+        playerId: session.playerId,
+        nickname: session.nickname,
+      }, (res: any) => {
+        if (res?.success && res?.player) {
+          setMyPlayer(res.player)
+          setCurrentPlayer(res.player.id)
+        }
+      })
+      socket.emit('player:join', {
+        channelId: currentChannelId,
+        id: session.playerId,
+        nickname: session.nickname,
+      })
     }
-  }, [isPlayPhase, savedId, savedNickname, hasConfirmedJoin, myPlayer, setCurrentPlayer])
+  }, [currentChannelId, setCurrentPlayer])
 
-  // 퇴장 처리 함수: 로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
+  // 퇴장 처리 함수: 세션/로컬스토리지 완전 삭제 및 닉네임 입력 화면으로 복귀
   const handleExitGame = () => {
-    const idToLeave = myPlayer?.id || currentPlayerId || safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
+    const session = getPlayerSession(currentChannelId)
+    const idToLeave = myPlayer?.id || currentPlayerId || session?.playerId
     if (idToLeave) {
       socket.emit('player:leave', { channelId: currentChannelId, id: idToLeave })
       fetch(`/api/game/leave?channel=${currentChannelId}`, {
@@ -1197,32 +1234,20 @@ export default function PlayerPage() {
       removePlayer(idToLeave)
     }
 
+    try {
+      sessionStorage.removeItem(`player_session_${currentChannelId}`)
+      if (currentChannelId === '1') {
+        sessionStorage.removeItem('player_session')
+      }
+    } catch (e) {}
     clearLocalPlayerSession()
     clearCurrentPlayer()
     setMyPlayer(null)
     setHasConfirmedJoin(false)
   }
 
-  // 브라우저 닫기/퇴장 시 대기실 세션 정리
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (phase === 'lobby') {
-        const id = myPlayer?.id || safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
-        if (id) {
-          socket.emit('player:leave', { channelId: currentChannelId, id })
-          const blob = new Blob([JSON.stringify({ channelId: currentChannelId, id })], { type: 'application/json' })
-          navigator.sendBeacon(`/api/game/leave?channel=${currentChannelId}`, blob)
-        }
-      }
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [phase, myPlayer?.id, currentChannelId])
-
   // 게임 세션 유효성 검사 및 리셋 감지
   useEffect(() => {
-    const sId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
-
     // 1. 대기실(lobby)인 경우: 이전 라운드 투표/탈락 잔여 데이터 리셋
     if (phase === 'lobby') {
       if (myPlayer && (myPlayer.status === 'eliminated' || myPlayer.eliminatedRound !== undefined)) {
@@ -1230,22 +1255,7 @@ export default function PlayerPage() {
       }
       return
     }
-
-    // 2. 게임 진행 중(isPlayPhase)인데 저장된 세션이 있는 경우:
-    // 서버 players 목록이 이미 로드되었고(players.length > 0), 서버 목록에 내 sId가 전혀 없다면?
-    // -> 이전 게임의 유효하지 않은 세션이므로 파기하고 닉네임 입력 화면으로 초기화!
-    if (isPlayPhase && sId && players.length > 0) {
-      const isValidPlayer = players.some((p) => p && p.id === sId)
-      if (!isValidPlayer) {
-        console.warn('⚠️ [Session Invalid] 현재 진행 중인 게임 세션에 없는 플레이어 ID입니다. 세션을 파기합니다:', sId)
-        clearLocalPlayerSession()
-        clearCurrentPlayer()
-        setMyPlayer(null)
-        setHasConfirmedJoin(false)
-        return
-      }
-    }
-  }, [phase, isPlayPhase, players, myPlayer, clearCurrentPlayer, currentChannelId])
+  }, [phase, myPlayer])
 
   // 사용자 최초 터치/클릭 시 Web Audio Context 잠금 해제
   useEffect(() => {
@@ -1284,7 +1294,13 @@ export default function PlayerPage() {
     }
 
     const handleGameReset = () => {
-      // 참가자 완전 비우기 / 게임 초기화 시 로컬스토리지 완전 삭제 및 닉네임 입력 폼으로 초기화
+      // 참가자 완전 비우기 / 게임 초기화 시 세션/로컬스토리지 완전 삭제 및 닉네임 입력 폼으로 초기화
+      try {
+        sessionStorage.removeItem(`player_session_${currentChannelId}`)
+        if (currentChannelId === '1') {
+          sessionStorage.removeItem('player_session')
+        }
+      } catch (e) {}
       clearLocalPlayerSession()
       clearCurrentPlayer()
       setMyPlayer(null)
@@ -1306,22 +1322,30 @@ export default function PlayerPage() {
   // 2. 서버 players 목록에서 내 최신 상태(생존/탈락)를 안전하게 반영 (절대 null로 튕기지 않음)
   const currentChSavedId = safeStorage.getItem(`lasttwo_player_id_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_id')
   const currentChSavedNick = safeStorage.getItem(`lasttwo_player_nickname_ch_${currentChannelId}`) || safeStorage.getItem('lasttwo_player_nickname')
+  const sessionUser = getPlayerSession(currentChannelId)
 
-  const foundInList = players.find((p) => p && p.id === (myPlayer?.id || currentPlayerId || (isPlayPhase ? currentChSavedId : null)))
+  const foundInList = players.find((p) => p && p.id === (myPlayer?.id || currentPlayerId || sessionUser?.playerId || currentChSavedId))
   const currentPlayer: Player | null =
     foundInList ||
     myPlayer ||
-    (isPlayPhase && currentChSavedId && currentChSavedNick
+    (sessionUser
       ? {
-          id: currentChSavedId,
-          nickname: currentChSavedNick,
-          status: 'alive',
+          id: sessionUser.playerId,
+          nickname: sessionUser.nickname,
+          status: (sessionUser.status as any) || 'alive',
           joinedAt: Date.now(),
         }
-      : null)
+      : (currentChSavedId && currentChSavedNick
+        ? {
+            id: currentChSavedId,
+            nickname: currentChSavedNick,
+            status: 'alive',
+            joinedAt: Date.now(),
+          }
+        : null))
 
-  // 대기실이거나 참가 확정을 하지 않았거나 플레이어 정보가 없으면 무조건 깨끗한 닉네임 입력 화면 강제!
-  if (!hasConfirmedJoin || !currentPlayer || (phase === 'lobby' && !hasConfirmedJoin)) {
+  // 참가 확정을 하지 않았거나 플레이어 정보가 없으면 닉네임 입력 화면 노출
+  if (!hasConfirmedJoin || !currentPlayer) {
     return (
       <ErrorBoundary>
         <NicknameForm
@@ -1329,6 +1353,18 @@ export default function PlayerPage() {
             setMyPlayer(p)
             setCurrentPlayer(p.id)
             setHasConfirmedJoin(true)
+            const sessionData = {
+              playerId: p.id,
+              nickname: p.nickname,
+              channelId: currentChannelId,
+              status: p.status || 'alive',
+            }
+            try {
+              sessionStorage.setItem(`player_session_${currentChannelId}`, JSON.stringify(sessionData))
+              if (currentChannelId === '1') {
+                sessionStorage.setItem('player_session', JSON.stringify(sessionData))
+              }
+            } catch (e) {}
             safeStorage.setItem(`lasttwo_player_id_ch_${currentChannelId}`, p.id)
             safeStorage.setItem(`lasttwo_player_nickname_ch_${currentChannelId}`, p.nickname)
             if (currentChannelId === '1') {

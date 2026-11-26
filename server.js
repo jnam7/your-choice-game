@@ -547,6 +547,68 @@ io.on('connection', (socket) => {
     socket.emit('server:tunnel_updated', publicTunnelUrl)
   }
 
+  // 1-0. 참가자 재접속 세션 복구 (player:reconnect)
+  socket.on('player:reconnect', (data, callback) => {
+    try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      const playerId = data?.playerId || data?.id
+      const nickname = (data?.nickname || '').trim()
+
+      if (!playerId && !nickname) {
+        if (callback) callback({ success: false, error: '유효하지 않은 재접속 정보입니다.' })
+        return
+      }
+
+      const room = getChannelRoom(ch.id)
+      socket.join(room)
+      if (ch.id === '1') {
+        socket.join(SOCKET_ROOM_MAIN)
+      }
+      socket.data.channelId = ch.id
+
+      let player = ch.gameState.players.find((p) => (playerId && p.id === playerId) || (nickname && p.nickname === nickname))
+      const isLobby = ch.gameState.phase === 'lobby'
+
+      if (player) {
+        player.socketId = socket.id
+        if (playerId) player.id = playerId
+        if (nickname) player.nickname = nickname
+        console.log(`🔄 [CH ${ch.id} PLAYER RECONNECT] ${player.nickname} (${player.id}) 최신 소켓 갱신`)
+      } else {
+        player = {
+          id: playerId || ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+          nickname: nickname || '참가자',
+          status: isLobby ? 'alive' : 'eliminated',
+          isAlive: isLobby,
+          joinedAt: Date.now(),
+          socketId: socket.id,
+        }
+        ch.gameState.players.push(player)
+        console.log(`➕ [CH ${ch.id} PLAYER RECONNECT RESTORE] ${player.nickname} (${player.id}) 재등록`)
+        broadcastPlayerJoined(player, ch.id)
+      }
+
+      socket.emit('sync', ch.gameState)
+      socket.emit('game:sync', ch.gameState)
+      socket.emit('game:state_sync', ch.gameState)
+      socket.emit('state:sync', ch.gameState)
+
+      if (callback) {
+        callback({
+          success: true,
+          player,
+          players: ch.gameState.players,
+          channelId: ch.id,
+          gameState: ch.gameState,
+        })
+      }
+    } catch (e) {
+      console.error('[player:reconnect Error]', e)
+      if (callback) callback({ success: false, error: e.message })
+    }
+  })
+
   // 1. 참가자 등록 (player:join)
   socket.on('player:join', (data, callback) => {
     try {
