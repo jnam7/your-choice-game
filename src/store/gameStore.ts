@@ -351,11 +351,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     // ===== 룰 모드 설정 (다수의 선택 vs 소수의 선택) =====
     setRuleMode: (mode: RuleMode) => {
-      set({ ruleMode: mode })
       const channelId = get().channelId || '1'
+      set({ ruleMode: mode })
       socket.emit('admin:set_rule_mode', { channelId, ruleMode: mode })
       socket.emit('admin:set-rule-mode', { channelId, ruleMode: mode })
       socket.emit('admin:sync', { channelId, ruleMode: mode })
+      fetch(`/api/game/rule-mode?channel=${channelId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId, ruleMode: mode }),
+      }).catch(() => {})
       persist()
     },
 
@@ -491,7 +496,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     },
 
     addMockPlayers: (count: number, targetChannelId?: string) => {
-      const channelId = targetChannelId || get().channelId || '1'
+      const channelId = String(targetChannelId || get().channelId || '1').trim() || '1'
       const existing = get().players.length
       const available = mockNicknames.slice(existing, existing + count)
       const extras: string[] = []
@@ -501,7 +506,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       const names = [...available, ...extras]
 
       const newPlayers: Player[] = names.map((nickname, i) => ({
-        id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `mock_${channelId}_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
         nickname,
         status: 'alive' as const,
         joinedAt: Date.now() + Math.random() * 1000,
@@ -516,6 +521,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       // 서버에 더미 참가자 즉시 등록 및 전파
       socket.emit('admin:add_mock_players', { channelId, newPlayers, count })
       socket.emit('admin:add-mock-players', { channelId, newPlayers, count })
+      fetch(`/api/game/mock-players?channel=${channelId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId, newPlayers, count }),
+      }).catch(() => {})
     },
 
     // ===== 게임 제어 흐름 =====

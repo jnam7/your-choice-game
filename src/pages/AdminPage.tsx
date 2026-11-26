@@ -544,23 +544,25 @@ export default function AdminPage() {
                     <span className="text-gray-400 mr-1 font-bold">생존 룰:</span>
                     <button
                       onClick={() => setRuleMode('majority')}
-                      disabled={phase === 'voting'}
+                      disabled={phase !== 'lobby'}
                       className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
                         ruleMode === 'majority'
                           ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-navy-dark shadow-md shadow-yellow-500/30'
                           : 'bg-navy border border-gold/20 text-gray-300 hover:text-white'
                       }`}
+                      title={phase !== 'lobby' ? '게임 진행 중에는 룰을 변경할 수 없습니다' : '다수의 선택 모드로 전환'}
                     >
                       <span>👥 다수의 선택</span>
                     </button>
                     <button
                       onClick={() => setRuleMode('minority')}
-                      disabled={phase === 'voting'}
+                      disabled={phase !== 'lobby'}
                       className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
                         ruleMode === 'minority'
                           ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-md shadow-purple-500/30'
                           : 'bg-navy border border-gold/20 text-gray-300 hover:text-white'
                       }`}
+                      title={phase !== 'lobby' ? '게임 진행 중에는 룰을 변경할 수 없습니다' : '소수의 선택 모드로 전환'}
                     >
                       <span>🎯 소수의 선택</span>
                     </button>

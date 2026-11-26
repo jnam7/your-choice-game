@@ -1227,6 +1227,49 @@ app.post('/api/admin/sync', (req, res) => {
   }
 })
 
+app.post('/api/game/rule-mode', (req, res) => {
+  try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
+    const mode = req.body?.ruleMode || req.body?.mode || 'majority'
+    ch.gameState.ruleMode = mode === 'minority' ? 'minority' : 'majority'
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+    }
+    res.json({ success: true, ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/mock-players', (req, res) => {
+  try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
+    const incoming = Array.isArray(req.body?.newPlayers) ? req.body.newPlayers : []
+    if (incoming.length > 0) {
+      incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
+      ch.gameState.players.push(...incoming)
+    }
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('players:update', ch.gameState.players)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+    }
+    res.json({ success: true, total: ch.gameState.players.length, channelId: ch.id })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
 const handleHttpVote = (req, res) => {
   try {
     const { playerId, choice } = req.body || {}
