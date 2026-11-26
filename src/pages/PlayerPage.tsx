@@ -120,10 +120,9 @@ function NicknameForm({ onJoin }: { onJoin: (player: Player) => void }) {
       // 2. 대기실(WaitingRoom) 화면으로 0ms 즉각 전환
       onJoin(newPlayer)
 
-      // 3. 서버에 소켓 참가자 등록 전송 (3번 서바이벌 퀴즈 동일)
+      // 3. 서버에 소켓 참가자 등록 비동기 전송 (소켓 응답 지연과 무관하게 입장 완료)
       socket.emit('player:join', { channelId, id: localId, nickname: trimmed }, (res: any) => {
         if (res?.success && res?.player) {
-          onJoin(res.player)
           useGameStore.getState().setCurrentPlayer(res.player.id)
         }
       })

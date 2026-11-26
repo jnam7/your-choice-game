@@ -648,7 +648,10 @@ export default function AdminPage() {
                         />
                       </div>
                       <button
-                        onClick={() => addMockPlayers(mockCount, channelId)}
+                        onClick={() => {
+                          const count = Number(mockCount) || 10
+                          addMockPlayers(count, channelId)
+                        }}
                         className="px-3 py-1.5 bg-navy border border-gold/40 rounded text-gold hover:bg-gold/10 text-xs font-bold transition-colors"
                       >
                         추가
