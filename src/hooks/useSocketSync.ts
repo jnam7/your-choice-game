@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { socket } from '../socket'
 import { getChannelIdFromUrl, getChannelRoomName } from '../utils/channel'
+import { setMasterVolume as setSoundMasterVolume, setSoundMuted as setGlobalMuted } from '../utils/sound'
 import type { Player } from '../types/game'
 
 export function useSocketSync() {
@@ -235,6 +236,23 @@ export function useSocketSync() {
       }
     }
 
+    const handleVolumeUpdated = (data: any) => {
+      if (!data) return
+      if (data.channelId && data.channelId !== effectiveChannelId) return
+      const updates: any = {}
+      if (typeof data.masterVolume === 'number') {
+        updates.masterVolume = data.masterVolume
+        setSoundMasterVolume(data.masterVolume)
+      }
+      if (typeof data.isMuted === 'boolean') {
+        updates.isMuted = data.isMuted
+        setGlobalMuted(data.isMuted)
+      }
+      if (Object.keys(updates).length > 0) {
+        useGameStore.setState(updates)
+      }
+    }
+
     const handleQrModeChanged = (data: any) => {
       if (data?.channelId && data.channelId !== effectiveChannelId) return
       const mode = data?.qrMode || data?.mode || data
@@ -274,6 +292,8 @@ export function useSocketSync() {
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
+    socket.on('volume_updated', handleVolumeUpdated)
+    socket.on('admin:volume_updated', handleVolumeUpdated)
 
     // 소켓이 이미 연결되어 있으면 바로 조인
     if (socket.connected) {
@@ -319,6 +339,8 @@ export function useSocketSync() {
       socket.off('game:paused', handlePaused)
       socket.off('game:resumed', handleResumed)
       socket.off('server:tunnel_updated', handleTunnelUpdated)
+      socket.off('volume_updated', handleVolumeUpdated)
+      socket.off('admin:volume_updated', handleVolumeUpdated)
     }
   }, [syncWithServer, setServerHostUrl, effectiveChannelId])
 }

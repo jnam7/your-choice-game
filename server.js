@@ -73,7 +73,9 @@ function createInitialGameState(channelId = '1') {
     ruleMode: 'majority',
     qrMode: 'wifi',
     serverHostUrl: '',
-    bgmVolume: 0.6,
+    bgmVolume: 0.8,
+    masterVolume: 0.8,
+    isMuted: false,
     currentQuestion: {
       id: 1,
       category: '음식',
@@ -1194,17 +1196,28 @@ io.on('connection', (socket) => {
     io.to(getChannelRoom(chId)).emit('game:update', data)
   })
 
-  // 관리자 TV BGM 마스터 볼륨 설정
+  // 관리자 TV 마스터 볼륨 및 전체 음소거 설정
   socket.on('admin:set_volume', (data) => {
     try {
       const chId = getEventChannelId(data)
       const ch = getChannel(chId)
-      const vol = typeof data?.volume === 'number' ? Math.max(0, Math.min(1, data.volume)) : 0.6
+      const rawVol = typeof data?.masterVolume === 'number' ? data.masterVolume : (typeof data?.volume === 'number' ? data.volume : 0.8)
+      const vol = Math.max(0, Math.min(1, rawVol))
+      const isMuted = typeof data?.isMuted === 'boolean' ? data.isMuted : false
+      ch.gameState.masterVolume = vol
       ch.gameState.bgmVolume = vol
+      ch.gameState.isMuted = isMuted
       const room = getChannelRoom(ch.id)
-      io.to(room).emit('game:volume_changed', { volume: vol, channelId: ch.id })
-      if (ch.id === '1') io.to(SOCKET_ROOM_MAIN).emit('game:volume_changed', { volume: vol, channelId: ch.id })
-      console.log(`🔊 [CH ${ch.id} BGM] Volume: ${Math.round(vol * 100)}%`)
+      const payload = { volume: vol, masterVolume: vol, isMuted, channelId: ch.id }
+      io.to(room).emit('volume_updated', payload)
+      io.to(room).emit('admin:volume_updated', payload)
+      io.to(room).emit('game:volume_changed', payload)
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('volume_updated', payload)
+        io.to(SOCKET_ROOM_MAIN).emit('admin:volume_updated', payload)
+        io.to(SOCKET_ROOM_MAIN).emit('game:volume_changed', payload)
+      }
+      console.log(`🔊 [CH ${ch.id} Audio] MasterVolume: ${Math.round(vol * 100)}%, Muted: ${isMuted}`)
     } catch (e) {
       console.error('[admin:set_volume Error]', e)
     }

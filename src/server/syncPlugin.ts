@@ -38,6 +38,9 @@ interface ServerGameState {
   ruleMode: 'majority' | 'minority'
   qrMode: 'wifi' | 'tunnel'
   serverHostUrl: string
+  bgmVolume?: number
+  masterVolume?: number
+  isMuted?: boolean
   currentQuestion: any
   currentResult: any
   isFinals: boolean
@@ -69,6 +72,9 @@ function createInitialGameState(channelId = '1'): ServerGameState {
     ruleMode: 'majority',
     qrMode: 'wifi',
     serverHostUrl: '',
+    bgmVolume: 0.8,
+    masterVolume: 0.8,
+    isMuted: false,
     currentQuestion: {
       id: 1,
       category: '음식',
@@ -1166,6 +1172,32 @@ export function syncPlugin(): Plugin {
       socket.on('admin:set-qr-mode', handleQrModeChange)
       socket.on('admin:set_qr_mode', handleQrModeChange)
       socket.on('qr:change', handleQrModeChange)
+
+      // 마스터 볼륨 및 음소거 설정
+      socket.on('admin:set_volume', (data: any) => {
+        try {
+          const chId = getEventChannelId(data)
+          const ch = getChannel(chId)
+          const rawVol = typeof data?.masterVolume === 'number' ? data.masterVolume : (typeof data?.volume === 'number' ? data.volume : 0.8)
+          const vol = Math.max(0, Math.min(1, rawVol))
+          const isMuted = typeof data?.isMuted === 'boolean' ? data.isMuted : false
+          ch.gameState.masterVolume = vol
+          ch.gameState.bgmVolume = vol
+          ch.gameState.isMuted = isMuted
+          const room = getChannelRoom(ch.id)
+          const payload = { volume: vol, masterVolume: vol, isMuted, channelId: ch.id }
+          ioInstance?.to(room).emit('volume_updated', payload)
+          ioInstance?.to(room).emit('admin:volume_updated', payload)
+          ioInstance?.to(room).emit('game:volume_changed', payload)
+          if (ch.id === '1') {
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('volume_updated', payload)
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('admin:volume_updated', payload)
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:volume_changed', payload)
+          }
+        } catch (e) {
+          console.error('[syncPlugin admin:set_volume Error]', e)
+        }
+      })
     })
   }
 

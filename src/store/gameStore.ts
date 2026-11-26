@@ -8,6 +8,7 @@ import {
   mockNicknames,
 } from '../data/questions'
 import { getChannelIdFromUrl, getChannelRoomName, AVAILABLE_CHANNELS } from '../utils/channel'
+import { stopAllSounds, setMasterVolume as setSoundMasterVolume, setSoundMuted as setGlobalMuted } from '../utils/sound'
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
@@ -107,6 +108,8 @@ const defaultInitialState: GameState = {
   ],
   serverHostUrl: getDefaultHostUrl(),
   currentPlayerId: null,
+  masterVolume: 0.8,
+  isMuted: false,
 }
 
 const persisted = loadPersistedState(initialChannelId)
@@ -522,8 +525,29 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       }).catch(() => {})
     },
 
+    // ===== 사운드 마스터 볼륨 및 음소거 제어 =====
+    setMasterVolume: (vol: number) => {
+      const clamped = Math.max(0, Math.min(1, vol))
+      set({ masterVolume: clamped })
+      setSoundMasterVolume(clamped)
+      persist()
+      const channelId = get().channelId || '1'
+      socket.emit('admin:set_volume', { channelId, masterVolume: clamped, isMuted: get().isMuted ?? false })
+    },
+
+    toggleMute: () => {
+      const nextMuted = !get().isMuted
+      set({ isMuted: nextMuted })
+      setGlobalMuted(nextMuted)
+      persist()
+      const channelId = get().channelId || '1'
+      socket.emit('admin:set_volume', { channelId, masterVolume: get().masterVolume ?? 0.8, isMuted: nextMuted })
+    },
+
     // ===== 게임 제어 흐름 =====
     startGame: (autoStartVoting = true) => {
+      // 게임 시작 신호 수신 즉시 모든 잡다한 효과음 강제 정지 및 초기화 (사운드 겹침 폭발 원천 차단)
+      stopAllSounds()
       const currentRule = get().ruleMode || 'majority'
       set({
         phase: 'question',

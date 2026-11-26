@@ -20,6 +20,10 @@ import {
   playRoundStartSound,
   preloadAudioAssets,
   stopAllSounds,
+  registerAudioInstance,
+  unregisterAudioInstance,
+  setMasterVolume as setSoundMasterVolume,
+  setSoundMuted,
 } from '../utils/sound'
 
 // ===== 관리자 페이지 이동 톱니바퀴 버튼 =====
@@ -466,9 +470,9 @@ function TVQuestion() {
   const isFinals = useGameStore((s) => Boolean(s?.isFinals))
   const ruleMode = useGameStore((s) => s?.ruleMode) || 'majority'
 
-  // 문제 출제(라운드 시작) 즉시 0초 시점에 라운드 시작음 즉각 재생 (지연 제거)
+  // 라운드 진입 시 효과음 중복 폭발 방지 (오직 BGM만 단독 재생되도록 정리)
   useEffect(() => {
-    playRoundStartSound()
+    // 단일 BGM 재생 원칙에 따라 중복 효과음 호출 제거
   }, [])
 
   if (!currentQuestion) {
@@ -1280,57 +1284,94 @@ export default function TVPage() {
   const bgmRef = useRef<HTMLAudioElement | null>(null)
   const isPlayingRef = useRef<boolean>(false)
   const [bgmEnabled, setBgmEnabled] = useState<boolean>(true)
-  const [masterVolume, setMasterVolume] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('tv_bgm_volume')
-      const parsed = saved !== null ? Number(saved) : NaN
-      return !isNaN(parsed) && parsed >= 0 ? parsed : 0.8
+  const storeMasterVolume = useGameStore((s) => s.masterVolume ?? 0.8)
+  const storeIsMuted = useGameStore((s) => Boolean(s.isMuted))
+  const [masterVolume, setMasterVolume] = useState<number>(storeMasterVolume)
+  const [isMuted, setIsMuted] = useState<boolean>(storeIsMuted)
+
+  // 전역 스토어 상태와 실시간 동기화
+  useEffect(() => {
+    setMasterVolume(storeMasterVolume)
+    setSoundMasterVolume(storeMasterVolume)
+  }, [storeMasterVolume])
+
+  useEffect(() => {
+    setIsMuted(storeIsMuted)
+    setSoundMuted(storeIsMuted)
+    const audio = bgmRef.current
+    if (audio) {
+      audio.muted = storeIsMuted
+      audio.volume = storeIsMuted ? 0 : storeMasterVolume
     }
-    return 0.8
-  })
+  }, [storeIsMuted, storeMasterVolume])
 
   // BGM 오디오 객체 및 타이머 참조
   const fadeIntervalRef = useRef<any>(null)
   const lastTickSecondRef = useRef<number>(-1)
 
-  // 관리자 소켓 이벤트로 마스터 볼륨 실시간 수신
+  // 관리자 소켓 이벤트로 마스터 볼륨 및 전체 음소거 실시간 수신
   useEffect(() => {
     const handleVolumeChange = (data: any) => {
-      if (typeof data?.volume === 'number') {
-        const vol = Math.max(0, Math.min(1, data.volume))
+      const rawVol = typeof data?.masterVolume === 'number' ? data.masterVolume : (typeof data?.volume === 'number' ? data.volume : undefined)
+      if (typeof rawVol === 'number') {
+        const vol = Math.max(0, Math.min(1, rawVol))
         setMasterVolume(vol)
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('tv_bgm_volume', String(vol))
+        setSoundMasterVolume(vol)
+      }
+      if (typeof data?.isMuted === 'boolean') {
+        setIsMuted(data.isMuted)
+        setSoundMuted(data.isMuted)
+        const audio = bgmRef.current
+        if (audio) {
+          audio.muted = data.isMuted
+          audio.volume = data.isMuted ? 0 : (masterVolume ?? 0.8)
         }
       }
     }
 
     const handleStateSync = (state: any) => {
-      if (typeof state?.bgmVolume === 'number') {
+      if (typeof state?.masterVolume === 'number') {
+        const vol = Math.max(0, Math.min(1, state.masterVolume))
+        setMasterVolume(vol)
+        setSoundMasterVolume(vol)
+      } else if (typeof state?.bgmVolume === 'number') {
         const vol = Math.max(0, Math.min(1, state.bgmVolume))
         setMasterVolume(vol)
+        setSoundMasterVolume(vol)
+      }
+      if (typeof state?.isMuted === 'boolean') {
+        setIsMuted(state.isMuted)
+        setSoundMuted(state.isMuted)
+        const audio = bgmRef.current
+        if (audio) {
+          audio.muted = state.isMuted
+          audio.volume = state.isMuted ? 0 : (masterVolume ?? 0.8)
+        }
       }
     }
 
+    socket.on('volume_updated', handleVolumeChange)
+    socket.on('admin:volume_updated', handleVolumeChange)
     socket.on('game:volume_changed', handleVolumeChange)
     socket.on('game:state_sync', handleStateSync)
     socket.on('state:sync', handleStateSync)
 
     return () => {
+      socket.off('volume_updated', handleVolumeChange)
+      socket.off('admin:volume_updated', handleVolumeChange)
       socket.off('game:volume_changed', handleVolumeChange)
       socket.off('game:state_sync', handleStateSync)
       socket.off('state:sync', handleStateSync)
     }
-  }, [])
+  }, [masterVolume])
 
   // 안정적인 BGM 재생 헬퍼 함수
   const playBgm = (targetVolume?: number) => {
     const audio = bgmRef.current
     if (!audio) return
-    const vol = typeof targetVolume === 'number' ? targetVolume : (masterVolume ?? 0.8)
+    const vol = isMuted ? 0 : (typeof targetVolume === 'number' ? targetVolume : (masterVolume ?? 0.8))
 
-    // 음소거 원천 해제 보장
-    audio.muted = false
+    audio.muted = isMuted
     audio.volume = vol
 
     if (!audio.paused && isPlayingRef.current) {
@@ -1343,12 +1384,11 @@ export default function TVPage() {
       playPromise
         .then(() => {
           isPlayingRef.current = true
-          audio.muted = false
+          audio.muted = isMuted
           audio.volume = vol
         })
         .catch((err) => {
           isPlayingRef.current = false
-          audio.muted = false
           console.warn('[TV BGM Autoplay 대기 - 화면 클릭 시 즉시 재생]:', err?.message)
         })
     }
@@ -1361,9 +1401,10 @@ export default function TVPage() {
     const audio = new Audio('/sounds/game_start.mp3')
     audio.preload = 'auto'
     audio.loop = true
-    audio.muted = false
-    audio.volume = masterVolume ?? 0.8
+    audio.muted = isMuted
+    audio.volume = isMuted ? 0 : (masterVolume ?? 0.8)
     bgmRef.current = audio
+    registerAudioInstance('bgm', audio)
 
     audio.onerror = () => {
       // /sounds/game_start.mp3 실패 시 /audio/bgm.mp3 -> /bgm.mp3로 fallback
@@ -1380,6 +1421,7 @@ export default function TVPage() {
     audio.load()
 
     return () => {
+      unregisterAudioInstance('bgm')
       if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current)
       audio.pause()
       audio.currentTime = 0
@@ -1392,10 +1434,12 @@ export default function TVPage() {
   useEffect(() => {
     const handleImmediateRoundAudio = () => {
       unlockAudioContext()
+      // 게임/라운드 시작 시 기존에 울리던 모든 효과음 즉시 강제 정지하여 겹침 폭발 원천 방지
+      stopAllSounds()
       const audio = bgmRef.current
       if (audio) {
-        audio.muted = false
-        audio.volume = masterVolume ?? 0.8
+        audio.muted = isMuted
+        audio.volume = isMuted ? 0 : (masterVolume ?? 0.8)
         if (audio.paused || !isPlayingRef.current) {
           audio.currentTime = 0
           audio.play().then(() => {
@@ -1405,7 +1449,6 @@ export default function TVPage() {
           })
         }
       }
-      playRoundStartSound()
     }
 
     socket.on('game:round_started', handleImmediateRoundAudio)
@@ -1417,19 +1460,19 @@ export default function TVPage() {
       socket.off('game:voting_started', handleImmediateRoundAudio)
       socket.off('start_voting', handleImmediateRoundAudio)
     }
-  }, [masterVolume])
+  }, [masterVolume, isMuted])
 
   // 3. 남은 시간 5초 이하 시 BGM 볼륨 25% 자동 감쇠 (Audio Ducking) 적용
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio || phase !== 'voting') return
 
-    const baseVolume = masterVolume ?? 0.8
-    audio.muted = false
+    const baseVolume = isMuted ? 0 : (masterVolume ?? 0.8)
+    audio.muted = isMuted
 
     if (timeLeft <= 5 && timeLeft > 0) {
       // 5초 이하 구간: 기존 볼륨의 25% 수준으로 하향
-      audio.volume = Math.max(0.05, baseVolume * 0.25)
+      audio.volume = isMuted ? 0 : Math.max(0.05, baseVolume * 0.25)
 
       // 매 초 초침 효과음 1회 재생
       if (lastTickSecondRef.current !== timeLeft) {
@@ -1440,16 +1483,16 @@ export default function TVPage() {
       audio.volume = baseVolume
       lastTickSecondRef.current = -1
     }
-  }, [timeLeft, phase, masterVolume])
+  }, [timeLeft, phase, masterVolume, isMuted])
 
-  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지 및 0초 라운드 시작음 즉각 재생
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 BGM 재생/일시정지
   const prevPhaseRef = useRef<string>(phase)
   useEffect(() => {
     const audio = bgmRef.current
     if (!audio) return
 
-    const baseVolume = masterVolume ?? 0.8
-    audio.muted = false
+    const baseVolume = isMuted ? 0 : (masterVolume ?? 0.8)
+    audio.muted = isMuted
 
     // 일시정지 상태인 경우 BGM 즉시 일시정지
     if (isPaused) {
@@ -1464,13 +1507,13 @@ export default function TVPage() {
     prevPhaseRef.current = phase
 
     if (isBgmPhase) {
-      // 0초 즉시 라운드 시작 효과음 재생 (대기실에서 시작 또는 문제 단계 진입 시 딜레이 없이 즉각 재생)
+      // 라운드 진입 시 모든 기존 효과음 정지 후 순수 BGM만 재생
       if (wasLobby || phase === 'question') {
-        playRoundStartSound()
+        stopAllSounds()
       }
 
       if (bgmEnabled) {
-        // 연출 딜레이와 분리하여 0초 시점에 BGM 즉각 재생
+        // 0초 시점에 BGM 즉각 재생
         playBgm(baseVolume)
       }
     } else {
@@ -1481,7 +1524,7 @@ export default function TVPage() {
       isPlayingRef.current = false
       lastTickSecondRef.current = -1
     }
-  }, [phase, isPaused, bgmEnabled, masterVolume])
+  }, [phase, isPaused, bgmEnabled, masterVolume, isMuted])
 
   // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락 및 BGM 활성화
   useEffect(() => {

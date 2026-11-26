@@ -103,6 +103,10 @@ export default function AdminPage() {
   const storeChannelId = useGameStore((s) => s.channelId)
   const channelId = storeChannelId || getChannelIdFromUrl()
   const setChannelId = useGameStore((s) => s.setChannelId)
+  const masterVolume = useGameStore((s) => s.masterVolume ?? 0.8)
+  const isMuted = useGameStore((s) => Boolean(s.isMuted))
+  const setMasterVolume = useGameStore((s) => s.setMasterVolume)
+  const toggleMute = useGameStore((s) => s.toggleMute)
 
   const handleChannelSwitch = (newCh: string) => {
     if (channelId === newCh) return
@@ -377,21 +381,17 @@ export default function AdminPage() {
   }
 
   const [copied, setCopied] = useState(false)
-  const [bgmMasterVolume, setBgmMasterVolume] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('admin_tv_bgm_volume')
-      return saved !== null ? Number(saved) : 0.6
-    }
-    return 0.6
-  })
 
-  // TV BGM 마스터 볼륨 실시간 조절 전송
+  // 마스터 볼륨 및 음소거 조절 핸들러 (BGM + 모든 효과음 동시 제어)
   const handleVolumeChange = (vol: number) => {
-    setBgmMasterVolume(vol)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('admin_tv_bgm_volume', String(vol))
-    }
-    socket.emit('admin:set_volume', { volume: vol })
+    setMasterVolume(vol)
+    socket.emit('admin:set_volume', { channelId, masterVolume: vol, isMuted, volume: vol })
+  }
+
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted
+    toggleMute()
+    socket.emit('admin:set_volume', { channelId, masterVolume, isMuted: nextMuted, volume: masterVolume })
   }
 
   const handleDownloadQR = () => {
@@ -605,24 +605,36 @@ export default function AdminPage() {
                     ))}
                   </div>
 
-                  {/* TV 화면 BGM 음량 조절 슬라이더 (0~100%) */}
+                  {/* 전체 음소거 및 마스터 볼륨 컨트롤러 */}
                   <div className="flex items-center gap-2 bg-navy px-3 py-1.5 rounded-lg border border-gold/20 text-xs">
-                    <span className="text-gold font-bold flex items-center gap-1 shrink-0">
-                      🔊 TV BGM 음량:
-                    </span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={bgmMasterVolume}
-                      onChange={(e) => handleVolumeChange(Number(e.target.value))}
-                      className="w-24 h-1.5 bg-gray-700 accent-gold rounded-lg cursor-pointer"
-                      title={`TV BGM 음량: ${Math.round(bgmMasterVolume * 100)}%`}
-                    />
-                    <span className="font-mono text-gold-light w-8 text-right font-bold">
-                      {Math.round(bgmMasterVolume * 100)}%
-                    </span>
+                    <button
+                      type="button"
+                      onClick={handleToggleMute}
+                      className={`px-2 py-1 rounded font-bold flex items-center gap-1 transition-all ${isMuted
+                          ? 'bg-red-600/90 text-white hover:bg-red-500 shadow-md animate-pulse'
+                          : 'bg-gold/20 text-gold-light hover:bg-gold/30'
+                        }`}
+                      title={isMuted ? '음소거 해제' : '전체 음소거'}
+                    >
+                      {isMuted ? '🔇 음소거 해제' : '🔊 전체 음소거'}
+                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-gray-300 font-bold shrink-0">마스터 볼륨:</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={isMuted ? 0 : masterVolume}
+                        disabled={isMuted}
+                        onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                        className="w-20 h-1.5 bg-gray-700 accent-gold rounded-lg cursor-pointer disabled:opacity-40"
+                        title={`마스터 볼륨: ${isMuted ? 0 : Math.round(masterVolume * 100)}%`}
+                      />
+                      <span className="font-mono text-gold-light w-8 text-right font-bold">
+                        {isMuted ? '0%' : `${Math.round(masterVolume * 100)}%`}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

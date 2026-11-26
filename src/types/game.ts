@@ -108,9 +108,16 @@ export interface GameState {
 
   // 현재 플레이어 (직원 화면 용)
   currentPlayerId: string | null
+
+  // 전역 사운드 제어 (관리자 및 TV 연동)
+  masterVolume?: number
+  isMuted?: boolean
 }
 
 export interface GameActions {
+  // 사운드 제어
+  setMasterVolume: (vol: number) => void
+  toggleMute: () => void
   // 플레이어 관리
   addPlayer: (nickname: string, existingId?: string) => string
   setPlayers?: (players: Player[]) => void
