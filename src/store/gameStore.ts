@@ -236,7 +236,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     // ===== 채널 설정 =====
     setChannelId: (newChannelId: string) => {
       const validCh = (AVAILABLE_CHANNELS as readonly string[]).includes(newChannelId) ? newChannelId : '1'
-      if (get().channelId === validCh) return
+      const prevCh = get().channelId || '1'
+      if (prevCh === validCh) return
+
+      // 이전 채널 룸 소켓 퇴장
+      socket.emit('leave:channel', { channelId: prevCh })
+
       const chPersisted = loadPersistedState(validCh)
       set((state) => ({
         ...state,
@@ -244,6 +249,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         ...chPersisted,
         players: chPersisted.players || [],
         votes: chPersisted.votes || {},
+        currentResult: chPersisted.currentResult || null,
         chatMessages: chPersisted.chatMessages && chPersisted.chatMessages.length > 0 ? chPersisted.chatMessages : defaultInitialState.chatMessages,
       }))
 
@@ -512,7 +518,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       // 서버에 더미 참가자 즉시 등록 및 전파
       socket.emit('admin:add_mock_players', { channelId, newPlayers, count })
-      socket.emit('admin:add-mock-players', { channelId, newPlayers, count })
       fetch(`/api/game/mock-players?channel=${channelId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -991,7 +996,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
     clearAllPlayers: () => {
       clearDummyVoteTimers()
       const channelId = get().channelId || '1'
-      set({ players: [] })
+      set({ players: [], votes: {}, currentResult: null })
+      try {
+        localStorage.removeItem(`lasttwo_player_id_ch_${channelId}`)
+        localStorage.removeItem(`lasttwo_player_nickname_ch_${channelId}`)
+        if (channelId === '1') {
+          localStorage.removeItem('lasttwo_player_id')
+          localStorage.removeItem('lasttwo_player_nickname')
+        }
+      } catch (e) {}
       persist()
       socket.emit('admin:clear_all_players', { channelId })
       fetch(`/api/game/reset?channel=${channelId}`, {

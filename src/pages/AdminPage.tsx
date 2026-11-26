@@ -106,6 +106,9 @@ export default function AdminPage() {
 
   const handleChannelSwitch = (newCh: string) => {
     if (channelId === newCh) return
+    const prevCh = channelId
+    socket.emit('leave:channel', { channelId: prevCh })
+    useGameStore.setState({ players: [], votes: {} })
     setChannelId(newCh)
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
@@ -126,16 +129,17 @@ export default function AdminPage() {
       if (!data) return
       if (data.channelId && data.channelId !== channelId) return
       let list: Player[] = []
-      if (Array.isArray(data)) list = data
-      else if (data.players && Array.isArray(data.players)) list = data.players
-      else if (data.player) list = [data.player]
-
-      if (list.length > 0 || Array.isArray(data) || Array.isArray(data.players)) {
+      if (Array.isArray(data)) list = data.filter(Boolean)
+      else if (data.players && Array.isArray(data.players)) list = data.players.filter(Boolean)
+      else if (data.player) {
         const cur = useGameStore.getState().players
-        const map = new Map<string, Player>()
-        for (const p of cur) map.set(p.id, p)
-        for (const p of list) map.set(p.id, p)
-        useGameStore.getState().syncWithServer({ players: Array.from(map.values()) })
+        const exists = cur.some((p) => p.id === data.player.id)
+        list = exists ? cur.map((p) => (p.id === data.player.id ? data.player : p)) : [...cur, data.player]
+      }
+
+      // 서버 배열로 완전 교체 (Replace) - 이전 플레이어 누적 병합 금지
+      if (Array.isArray(data) || Array.isArray(data.players) || data.player) {
+        useGameStore.getState().syncWithServer({ players: list })
       }
     }
 

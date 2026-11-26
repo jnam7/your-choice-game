@@ -482,6 +482,9 @@ io.on('connection', (socket) => {
         socket.leave(r)
       }
     }
+    if (targetChannel !== '1') {
+      socket.leave(SOCKET_ROOM_MAIN)
+    }
     socket.join(getChannelRoom(targetChannel))
     if (targetChannel === '1') {
       socket.join(SOCKET_ROOM_MAIN)
@@ -494,13 +497,33 @@ io.on('connection', (socket) => {
     socket.emit('game:state_sync', ch.gameState)
     socket.emit('state:sync', ch.gameState)
     socket.emit('admin:sync', ch.gameState)
+    socket.emit('players:update', { channelId: targetChannel, players: ch.gameState.players })
     console.log(`📡 [SOCKET JOIN:CHANNEL] Socket ${socket.id} -> 채널 ${targetChannel} (${data?.role || 'user'})`)
     if (callback) callback({ success: true, channelId: targetChannel, state: ch.gameState })
+  })
+
+  // 채널 퇴장 핸들러
+  socket.on('leave:channel', (data) => {
+    try {
+      const targetChannel = String(data?.channelId || data || '').trim()
+      if (targetChannel) {
+        socket.leave(getChannelRoom(targetChannel))
+        if (targetChannel === '1') {
+          socket.leave(SOCKET_ROOM_MAIN)
+        }
+        console.log(`🚪 [SOCKET LEAVE:CHANNEL] Socket ${socket.id} <- 채널 ${targetChannel}`)
+      }
+    } catch (e) {
+      console.error('[leave:channel error]', e)
+    }
   })
 
   // 룸 조인 이벤트 수신 (join:room 및 join 호환)
   socket.on('join:room', (data) => {
     const targetRoom = data?.roomId || SOCKET_ROOM_MAIN
+    if (targetRoom === SOCKET_ROOM_MAIN && socket.data?.channelId && socket.data.channelId !== '1') {
+      return
+    }
     socket.join(targetRoom)
     if (data?.channelId) {
       socket.data.channelId = String(data.channelId).trim() || '1'
@@ -508,6 +531,9 @@ io.on('connection', (socket) => {
   })
   socket.on('join', (data) => {
     const targetRoom = typeof data === 'string' ? data : (data?.roomId || SOCKET_ROOM_MAIN)
+    if (targetRoom === SOCKET_ROOM_MAIN && socket.data?.channelId && socket.data.channelId !== '1') {
+      return
+    }
     socket.join(targetRoom)
   })
 
@@ -834,9 +860,15 @@ io.on('connection', (socket) => {
     })
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
     io.to(room).emit('game:force_lobby', { channelId: ch.id })
     io.to(room).emit('game:set_reset', { channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
     }
@@ -862,9 +894,15 @@ io.on('connection', (socket) => {
     })
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
     io.to(room).emit('game:force_lobby', { channelId: ch.id })
     io.to(room).emit('game:set_reset', { channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
     }
@@ -890,9 +928,15 @@ io.on('connection', (socket) => {
     })
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
     io.to(room).emit('game:force_lobby', { channelId: ch.id })
     io.to(room).emit('game:set_reset', { channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
     }
@@ -912,9 +956,15 @@ io.on('connection', (socket) => {
     ch.gameState.votes = {}
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    io.to(room).emit('players:update', { channelId: ch.id, players: [] })
     io.to(room).emit('game:player_kicked_all', { channelId: ch.id })
     io.to(room).emit('game:reset', { channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: [] })
       io.to(SOCKET_ROOM_MAIN).emit('game:player_kicked_all', { channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:reset', { channelId: ch.id })
     }
@@ -938,8 +988,10 @@ io.on('connection', (socket) => {
       const ch = getChannel(chId)
       const incoming = Array.isArray(data?.newPlayers) ? data.newPlayers : []
       if (incoming.length > 0) {
-        incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
-        ch.gameState.players.push(...incoming)
+        const existingIds = new Set(ch.gameState.players.map((p) => p.id))
+        const toAdd = incoming.filter((p) => p && !existingIds.has(p.id))
+        toAdd.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
+        ch.gameState.players.push(...toAdd)
       } else {
         const count = Math.min(300, Math.max(1, Number(data?.count) || 10))
         const existing = ch.gameState.players.length
@@ -954,7 +1006,7 @@ io.on('connection', (socket) => {
           const idx = existing + i
           const nickname = idx < mockNames.length ? mockNames[idx] : `참가자${idx + 1}`
           newDummies.push({
-            id: `mock_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+            id: `mock_${ch.id}_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
             nickname,
             status: 'alive',
             isAlive: true,
@@ -967,11 +1019,11 @@ io.on('connection', (socket) => {
 
       broadcastState(ch.id)
       const room = getChannelRoom(ch.id)
-      io.to(room).emit('players:update', ch.gameState.players)
+      io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(room).emit('sync', ch.gameState)
       io.to(room).emit('game:sync', ch.gameState)
       if (ch.id === '1') {
-        io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+        io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
         io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
         io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
       }
@@ -1253,16 +1305,18 @@ app.post('/api/game/mock-players', (req, res) => {
     const ch = getChannel(chId)
     const incoming = Array.isArray(req.body?.newPlayers) ? req.body.newPlayers : []
     if (incoming.length > 0) {
-      incoming.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
-      ch.gameState.players.push(...incoming)
+      const existingIds = new Set(ch.gameState.players.map((p) => p.id))
+      const toAdd = incoming.filter((p) => p && !existingIds.has(p.id))
+      toAdd.forEach((p) => { p.isDummy = true; p.isAlive = true; p.status = 'alive' })
+      ch.gameState.players.push(...toAdd)
     }
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
-    io.to(room).emit('players:update', ch.gameState.players)
+    io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
     io.to(room).emit('sync', ch.gameState)
     io.to(room).emit('game:sync', ch.gameState)
     if (ch.id === '1') {
-      io.to(SOCKET_ROOM_MAIN).emit('players:update', ch.gameState.players)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
       io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
     }
@@ -1388,9 +1442,15 @@ app.post('/api/game/reset', (req, res) => {
     }
     broadcastState(ch.id)
     const room = getChannelRoom(ch.id)
+    io.to(room).emit('sync', ch.gameState)
+    io.to(room).emit('game:sync', ch.gameState)
+    io.to(room).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
     io.to(room).emit('game:force_lobby', { channelId: ch.id })
     io.to(room).emit('game:set_reset', { channelId: ch.id })
     if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('game:sync', ch.gameState)
+      io.to(SOCKET_ROOM_MAIN).emit('players:update', { channelId: ch.id, players: ch.gameState.players })
       io.to(SOCKET_ROOM_MAIN).emit('game:force_lobby', { channelId: ch.id })
       io.to(SOCKET_ROOM_MAIN).emit('game:set_reset', { channelId: ch.id })
     }

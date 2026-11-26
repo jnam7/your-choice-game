@@ -41,7 +41,7 @@ export function useSocketSync() {
         ? serverState.players.filter(Boolean)
         : (serverState.players && typeof serverState.players === 'object'
           ? (Object.values(serverState.players).filter(Boolean) as Player[])
-          : (serverState.players === null ? [] : useGameStore.getState().players))
+          : [])
 
       const mySavedId = typeof window !== 'undefined'
         ? (localStorage.getItem(`lasttwo_player_id_ch_${effectiveChannelId}`) || (effectiveChannelId === '1' ? localStorage.getItem('lasttwo_player_id') : null))
@@ -154,7 +154,7 @@ export function useSocketSync() {
           ? current.map((p) => (p.id === data.player.id ? data.player : p))
           : [...current, data.player]
       }
-      if (incomingList.length > 0 || Array.isArray(data) || Array.isArray(data.players)) {
+      if (Array.isArray(data) || Array.isArray(data.players) || data.player) {
         syncWithServer({ players: incomingList })
       }
     }
@@ -265,6 +265,7 @@ export function useSocketSync() {
     }, 3000)
 
     return () => {
+      socket.emit('leave:channel', { channelId: effectiveChannelId })
       clearInterval(pollInterval)
       socket.off('connect', handleConnect)
       socket.off('sync', handleStateSync)
