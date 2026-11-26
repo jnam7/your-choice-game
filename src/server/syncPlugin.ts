@@ -843,18 +843,19 @@ export function syncPlugin(): Plugin {
         try {
           const chId = getEventChannelId(data)
           const ch = getChannel(chId)
-          const rawMode = data?.mode || data?.qrMode || data
-          const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' ? 'tunnel' : 'wifi'
+          const rawMode = data?.qrMode || data?.mode || data
+          const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' || rawMode === 'external' ? 'tunnel' : 'wifi'
           ch.gameState.qrMode = mode
-          broadcastState(ch.id)
           const room = getChannelRoom(ch.id)
-          ioInstance?.to(room).emit('game:qr_mode_changed', { mode, channelId: ch.id })
-          ioInstance?.to(room).emit('qr:change', { mode, channelId: ch.id })
+          ioInstance?.to(room).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+          ioInstance?.to(room).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+          ioInstance?.to(room).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
           if (ch.id === '1') {
-            ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode, channelId: ch.id })
-            ioInstance?.to(SOCKET_ROOM_MAIN).emit('qr:change', { mode, channelId: ch.id })
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+            ioInstance?.to(SOCKET_ROOM_MAIN).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
           }
-          if (callback) callback({ success: true, mode, channelId: ch.id })
+          if (callback) callback({ success: true, mode, qrMode: mode, channelId: ch.id })
         } catch (err) {
           if (callback) callback({ success: false, mode: 'wifi' })
         }

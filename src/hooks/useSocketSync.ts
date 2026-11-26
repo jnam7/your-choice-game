@@ -221,9 +221,13 @@ export function useSocketSync() {
 
     const handleQrModeChanged = (data: any) => {
       if (data?.channelId && data.channelId !== effectiveChannelId) return
-      const mode = data?.mode || data?.qrMode || data
+      const mode = data?.qrMode || data?.mode || data
       if (mode) {
-        useGameStore.getState().setQrMode(mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' ? 'tunnel' : 'wifi')
+        const isTunnel = mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' || mode === 'external'
+        const targetMode = isTunnel ? 'tunnel' : 'wifi'
+        if (useGameStore.getState().qrMode !== targetMode) {
+          useGameStore.setState({ qrMode: targetMode })
+        }
       }
     }
 
@@ -246,6 +250,7 @@ export function useSocketSync() {
     socket.on('game:rule_mode_changed', handleRuleModeChanged)
     socket.on('rule_mode_changed', handleRuleModeChanged)
     socket.on('rule_mode_updated', handleRuleModeChanged)
+    socket.on('qr_mode_updated', handleQrModeChanged)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
@@ -281,6 +286,7 @@ export function useSocketSync() {
       socket.off('game:rule_mode_changed', handleRuleModeChanged)
       socket.off('rule_mode_changed', handleRuleModeChanged)
       socket.off('rule_mode_updated', handleRuleModeChanged)
+      socket.off('qr_mode_updated', handleQrModeChanged)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
       socket.off('qr:change', handleQrModeChanged)
       socket.off('qr:changed', handleQrModeChanged)

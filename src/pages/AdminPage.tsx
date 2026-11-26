@@ -224,24 +224,31 @@ export default function AdminPage() {
     }
 
     const handleQrModeChanged = (data: any) => {
-      const mode = data?.mode || data?.qrMode || data
+      if (data?.channelId && data.channelId !== channelId) return
+      const mode = data?.qrMode || data?.mode || data
       if (mode) {
-        const isTunnel = mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte'
+        const isTunnel = mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' || mode === 'external'
+        const targetMode = isTunnel ? 'tunnel' : 'wifi'
         setAdminQrTab(isTunnel ? 'lte' : 'wifi')
+        if (useGameStore.getState().qrMode !== targetMode) {
+          useGameStore.setState({ qrMode: targetMode })
+        }
       }
     }
 
     socket.on('server:tunnel_updated', handleTunnelUpdated)
+    socket.on('qr_mode_updated', handleQrModeChanged)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
     return () => {
       socket.off('server:tunnel_updated', handleTunnelUpdated)
+      socket.off('qr_mode_updated', handleQrModeChanged)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
       socket.off('qr:change', handleQrModeChanged)
       socket.off('qr:changed', handleQrModeChanged)
     }
-  }, [setServerHostUrl])
+  }, [setServerHostUrl, channelId])
 
   // 관리자 QR 탭과 스토어 qrMode 동기화
   useEffect(() => {
@@ -250,16 +257,13 @@ export default function AdminPage() {
     }
   }, [qrMode])
 
-  // 관리자 QR 모드 변경 및 TV 화면 원격 동기화
+  // 관리자 QR 모드 변경 및 TV 화면 원격 동기화 (단방향 1회 직관 전송)
   const handleUpdateQrMode = (mode: 'wifi' | 'tunnel') => {
     setAdminQrTab(mode === 'tunnel' ? 'lte' : 'wifi')
     setQrMode(mode)
-    const modePayload = mode === 'tunnel' ? 'EXTERNAL' : 'WIFI'
-    socket.emit('admin:change_qr_mode', { mode: modePayload })
-    socket.emit('admin:set-qr-mode', { mode })
-    socket.emit('admin:set_qr_mode', { mode })
-    socket.emit('qr:change', { mode })
-    socket.emit('admin:sync', { qrMode: mode })
+    socket.emit('admin:set_qr_mode', { channelId, qrMode: mode })
+    socket.emit('admin:change_qr_mode', { channelId, mode: mode === 'tunnel' ? 'EXTERNAL' : 'WIFI', qrMode: mode })
+    socket.emit('qr:change', { channelId, mode })
   }
 
   // 문제 관리 폼 상태

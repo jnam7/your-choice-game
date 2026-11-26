@@ -216,6 +216,8 @@ function TVLobby() {
   const setServerHostUrl = useGameStore((s) => s.setServerHostUrl)
   const qrMode = useGameStore((s) => s.qrMode)
   const setQrMode = useGameStore((s) => s.setQrMode)
+  const storeChannelId = useGameStore((s) => s.channelId)
+  const channelId = storeChannelId || getChannelIdFromUrl()
 
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
@@ -239,15 +241,18 @@ function TVLobby() {
     }
 
     const handleQrModeChanged = (data: any) => {
-      const mode = data?.mode || data?.qrMode || data
+      if (data?.channelId && data.channelId !== channelId) return
+      const mode = data?.qrMode || data?.mode || data
       if (mode) {
-        setQrMode(mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' ? 'tunnel' : 'wifi')
+        const isTunnel = mode === 'EXTERNAL' || mode === 'tunnel' || mode === 'lte' || mode === 'external'
+        useGameStore.setState({ qrMode: isTunnel ? 'tunnel' : 'wifi' })
       }
     }
 
     socket.on('game:player_joined', handlePlayersUpdate)
     socket.on('player:joined', handlePlayersUpdate)
     socket.on('players:update', handlePlayersUpdate)
+    socket.on('qr_mode_updated', handleQrModeChanged)
     socket.on('game:qr_mode_changed', handleQrModeChanged)
     socket.on('qr:change', handleQrModeChanged)
     socket.on('qr:changed', handleQrModeChanged)
@@ -257,21 +262,19 @@ function TVLobby() {
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
+      socket.off('qr_mode_updated', handleQrModeChanged)
       socket.off('game:qr_mode_changed', handleQrModeChanged)
       socket.off('qr:change', handleQrModeChanged)
       socket.off('qr:changed', handleQrModeChanged)
       socket.off('admin:qr_mode_changed', handleQrModeChanged)
     }
-  }, [setQrMode])
+  }, [setQrMode, channelId])
 
   const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
   const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)
   const isPublicDomain = !isLocalhost && !isPrivateIp
-
-  const storeChannelId = useGameStore((s) => s.channelId)
-  const channelId = storeChannelId || getChannelIdFromUrl()
 
   // 1. Wi-Fi 접속 URL: 로컬 사설망 IP 기반 (절대 외부 URL과 혼용되지 않음)
   const baseWifiUrl = !isLocalhost
@@ -324,7 +327,9 @@ function TVLobby() {
   }, [])
 
   // 관리자 설정 기반 현재 활성 QR 모드 ('wifi' | 'tunnel')
-  const activeTab: 'wifi' | 'tunnel' = qrMode === 'tunnel' ? 'tunnel' : 'wifi'
+  const isTunnelMode = qrMode === 'tunnel' || qrMode === ('external' as any)
+  const activeTab: 'wifi' | 'tunnel' = isTunnelMode ? 'tunnel' : 'wifi'
+  const activeJoinUrl = activeTab === 'wifi' ? wifiUrl : (publicLteUrl || '')
 
   return (
     <div className="w-full flex-1 flex flex-col items-center justify-center p-4 md:p-6 relative my-auto">
@@ -382,6 +387,7 @@ function TVLobby() {
         {activeTab === 'wifi' ? (
           <div className="bg-white p-5 rounded-3xl shadow-2xl">
             <QRCodeSVG
+              key={`wifi-${channelId}-${wifiUrl}`}
               value={wifiUrl}
               size={260}
               bgColor="#ffffff"
@@ -392,6 +398,7 @@ function TVLobby() {
         ) : publicLteUrl ? (
           <div className="bg-white p-5 rounded-3xl shadow-2xl">
             <QRCodeSVG
+              key={`tunnel-${channelId}-${publicLteUrl}`}
               value={publicLteUrl}
               size={260}
               bgColor="#ffffff"

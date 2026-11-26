@@ -498,6 +498,8 @@ io.on('connection', (socket) => {
     socket.emit('state:sync', ch.gameState)
     socket.emit('admin:sync', ch.gameState)
     socket.emit('players:update', { channelId: targetChannel, players: ch.gameState.players })
+    socket.emit('qr_mode_updated', { qrMode: ch.gameState.qrMode, mode: ch.gameState.qrMode, channelId: targetChannel })
+    socket.emit('game:qr_mode_changed', { qrMode: ch.gameState.qrMode, mode: ch.gameState.qrMode, channelId: targetChannel })
     console.log(`📡 [SOCKET JOIN:CHANNEL] Socket ${socket.id} -> 채널 ${targetChannel} (${data?.role || 'user'})`)
     if (callback) callback({ success: true, channelId: targetChannel, state: ch.gameState })
   })
@@ -1138,19 +1140,20 @@ io.on('connection', (socket) => {
     try {
       const chId = getEventChannelId(data)
       const ch = getChannel(chId)
-      const rawMode = data?.mode || data?.qrMode || data
-      const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' ? 'tunnel' : 'wifi'
+      const rawMode = data?.qrMode || data?.mode || data
+      const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' || rawMode === 'external' ? 'tunnel' : 'wifi'
       ch.gameState.qrMode = mode
-      broadcastState(ch.id)
       const room = getChannelRoom(ch.id)
-      io.to(room).emit('game:qr_mode_changed', { mode, channelId: ch.id })
-      io.to(room).emit('qr:change', { mode, channelId: ch.id })
+      io.to(room).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+      io.to(room).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+      io.to(room).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
       if (ch.id === '1') {
-        io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { mode, channelId: ch.id })
-        io.to(SOCKET_ROOM_MAIN).emit('qr:change', { mode, channelId: ch.id })
+        io.to(SOCKET_ROOM_MAIN).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+        io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+        io.to(SOCKET_ROOM_MAIN).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
       }
       console.log(`📡 [CH ${ch.id} QR MODE] -> ${mode}`)
-      if (callback) callback({ success: true, mode, channelId: ch.id })
+      if (callback) callback({ success: true, mode, qrMode: mode, channelId: ch.id })
     } catch (err) {
       if (callback) callback({ success: false, mode: 'wifi' })
     }
@@ -1294,6 +1297,28 @@ app.post('/api/game/rule-mode', (req, res) => {
       io.to(SOCKET_ROOM_MAIN).emit('game:rule_mode_changed', { ruleMode: ch.gameState.ruleMode, channelId: ch.id })
     }
     res.json({ success: true, ruleMode: ch.gameState.ruleMode, channelId: ch.id })
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message })
+  }
+})
+
+app.post('/api/game/qr-mode', (req, res) => {
+  try {
+    const chId = getReqChannelId(req)
+    const ch = getChannel(chId)
+    const rawMode = req.body?.qrMode || req.body?.mode
+    const mode = rawMode === 'EXTERNAL' || rawMode === 'tunnel' || rawMode === 'lte' || rawMode === 'external' ? 'tunnel' : 'wifi'
+    ch.gameState.qrMode = mode
+    const room = getChannelRoom(ch.id)
+    io.to(room).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+    io.to(room).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+    io.to(room).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('qr_mode_updated', { qrMode: mode, mode, channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('game:qr_mode_changed', { qrMode: mode, mode, channelId: ch.id })
+      io.to(SOCKET_ROOM_MAIN).emit('qr:change', { qrMode: mode, mode, channelId: ch.id })
+    }
+    res.json({ success: true, qrMode: mode, mode, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
   }

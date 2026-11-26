@@ -346,12 +346,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
     // ===== QR 접속 모드 설정 (wifi vs tunnel) =====
     setQrMode: (mode: QrMode) => {
+      if (get().qrMode === mode) return
       set({ qrMode: mode })
-      const channelId = get().channelId || '1'
-      socket.emit('admin:change_qr_mode', { channelId, mode: mode === 'tunnel' ? 'EXTERNAL' : 'WIFI' })
-      socket.emit('admin:set-qr-mode', { channelId, mode })
-      socket.emit('admin:set_qr_mode', { channelId, mode })
-      socket.emit('qr:change', { channelId, mode })
       persist()
     },
 
