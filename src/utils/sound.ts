@@ -16,14 +16,17 @@ let currentPlayingTrack: string = ''
 export const getBgmPlayer = (): HTMLAudioElement | null => {
   if (!globalBgmPlayer && typeof window !== 'undefined') {
     globalBgmPlayer = new Audio()
+    globalBgmPlayer.preload = 'auto'
     globalBgmPlayer.loop = true
+    globalBgmPlayer.src = '/sounds/game_start.mp3'
+    globalBgmPlayer.load()
     globalBgmPlayer.muted = isMutedState
     globalBgmPlayer.volume = isMutedState ? 0 : masterVolumeState
   }
   return globalBgmPlayer
 }
 
-export const playBGM = (trackUrl: string, volume: number = 0.8): void => {
+export const playBGM = (trackUrl: string = '/sounds/game_start.mp3', volume: number = 0.8, startTime: number = 0): void => {
   const player = getBgmPlayer()
   if (!player) return
 
@@ -37,9 +40,17 @@ export const playBGM = (trackUrl: string, volume: number = 0.8): void => {
   }
 
   try {
-    player.pause() // 이전 곡 즉시 정지
-    player.currentTime = 0
-    player.src = trackUrl // 음원 교체
+    const currentSrc = player.getAttribute('src') || player.src || ''
+    // 음원이 변경된 경우에만 새로 로드하여 불필요한 네트워크 버퍼링 딜레이(3~4초) 원천 제거
+    if (!currentSrc.includes(trackUrl)) {
+      player.src = trackUrl
+      player.load()
+    }
+
+    try {
+      player.currentTime = startTime
+    } catch {}
+
     player.muted = isMutedState
     player.volume = effectiveVol
     currentPlayingTrack = trackUrl
@@ -58,7 +69,7 @@ export const stopBGM = (): void => {
     try {
       globalBgmPlayer.pause()
       globalBgmPlayer.currentTime = 0
-      globalBgmPlayer.removeAttribute('src')
+      // removeAttribute('src') 호출 금지: 캐시된 오디오 버퍼를 유지해야 다음 라운드에서 0ms 즉시 재생됨
     } catch {}
     currentPlayingTrack = ''
   }

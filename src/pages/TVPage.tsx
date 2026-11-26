@@ -474,10 +474,10 @@ function TVQuestion() {
   const isFinals = useGameStore((s) => Boolean(s?.isFinals))
   const ruleMode = useGameStore((s) => s?.ruleMode) || 'majority'
 
-  // 라운드 진입 시 효과음 중복 폭발 방지 (오직 BGM만 단독 재생되도록 정리)
+  // 문제 출제(라운드 시작) 즉시 0초 시점에 BGM 즉각 재생 (4초 딜레이 제거)
   useEffect(() => {
-    // 단일 BGM 재생 원칙에 따라 중복 효과음 호출 제거
-  }, [])
+    playBGM('/sounds/game_start.mp3')
+  }, [roundNumber])
 
   if (!currentQuestion) {
     return (
@@ -612,6 +612,11 @@ function TVVoting() {
     }
     return timeLimit || 15
   })
+
+  // 15초 투표 카운트다운 시작 즉시 0초 시점에 BGM 즉각 재생 (4초 딜레이 제거)
+  useEffect(() => {
+    playBGM('/sounds/game_start.mp3')
+  }, [roundNumber])
 
   // 절대 타임스탬프 기반 타이머: setInterval(timeLeft - 1) 완전 폐기 및 100ms 정밀 갱신
   useEffect(() => {
@@ -1275,6 +1280,7 @@ export default function TVPage() {
   }, [urlChannel])
 
   const phase = useGameStore((s) => s.phase)
+  const roundNumber = useGameStore((s) => s.roundNumber)
   const currentPhase: GamePhase = phase || 'lobby'
   const isPaused = useGameStore((s) => s.isPaused)
   const timeLeft = useGameStore((s) => s.timeLeft)
@@ -1408,7 +1414,7 @@ export default function TVPage() {
     }
   }, [timeLeft, phase, masterVolume, isMuted])
 
-  // 2. 게임 페이즈(단계) 및 일시정지에 따른 전역 BGM 재생/정지
+  // 2. 게임 페이즈(단계) 및 일시정지에 따른 전역 BGM 재생/정지 (15초 카운트다운 0초 즉시 재생)
   const prevPhaseRef = useRef<string>(phase)
   useEffect(() => {
     const baseVolume = isMuted ? 0 : (masterVolume ?? 0.8)
@@ -1425,7 +1431,7 @@ export default function TVPage() {
 
     if (isBgmPhase) {
       if (bgmEnabled) {
-        // 단일 전역 BGM 플레이어로 재생 (이미 재생 중이면 중복 실행 무시됨)
+        // 타이머 15초 시작과 동시에 0초 즉시 재생 (4초 딜레이 제거)
         playBGM('/sounds/game_start.mp3', baseVolume)
       }
     } else {
@@ -1433,7 +1439,7 @@ export default function TVPage() {
       stopBGM()
       lastTickSecondRef.current = -1
     }
-  }, [phase, isPaused, bgmEnabled, masterVolume, isMuted])
+  }, [phase, roundNumber, isPaused, bgmEnabled, masterVolume, isMuted])
 
   // 브라우저 첫 인터랙션 시 오디오 컨텍스트 언락 및 BGM 활성화
   useEffect(() => {
