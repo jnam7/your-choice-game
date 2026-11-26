@@ -42,6 +42,8 @@ export interface Vote {
 }
 
 export interface RoundResult {
+  roundNumber?: number
+  round?: number
   questionId: number | string
   question: Question
   votesA: number

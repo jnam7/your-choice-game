@@ -84,6 +84,7 @@ function createInitialGameState(channelId = '1') {
       isFinals: false,
     },
     currentResult: null,
+    roundResults: [],
     isFinals: false,
     isGameOver: false,
     soleWinnerId: null,
@@ -324,6 +325,8 @@ function computeAndPublishResult(channelId = '1') {
 
   const result = {
     channelId: ch.id,
+    roundNumber: roundNumber || 1,
+    round: roundNumber || 1,
     questionId: currentQuestion?.id || 1,
     question: currentQuestion,
     votesA,
@@ -348,6 +351,17 @@ function computeAndPublishResult(channelId = '1') {
   }
 
   ch.gameState.currentResult = result
+  if (!Array.isArray(ch.gameState.roundResults)) {
+    ch.gameState.roundResults = []
+  }
+  const existsIndex = ch.gameState.roundResults.findIndex(
+    (r) => (r.roundNumber === roundNumber || r.round === roundNumber) || r.questionId === currentQuestion?.id
+  )
+  if (existsIndex >= 0) {
+    ch.gameState.roundResults[existsIndex] = result
+  } else {
+    ch.gameState.roundResults.push(result)
+  }
   ch.gameState.isGameOver = isGameOver
   ch.gameState.soleWinnerId = soleWinnerId
 
@@ -513,6 +527,10 @@ function applyAdminSync(updates, channelId = '1') {
 
     if (updates.currentResult) {
       ch.gameState.currentResult = updates.currentResult
+    }
+
+    if (Array.isArray(safeUpdates.roundResults)) {
+      ch.gameState.roundResults = safeUpdates.roundResults
     }
 
     console.log(`🔄 [CH ${ch.id} SYNC] Phase: ${oldPhase} -> ${ch.gameState.phase}, Round: ${ch.gameState.roundNumber}`)
@@ -840,6 +858,7 @@ io.on('connection', (socket) => {
       ch.gameState.roundNumber = 1
       ch.gameState.votes = {}
       ch.gameState.currentResult = null
+      ch.gameState.roundResults = []
       ch.gameState.isGameOver = false
       ch.gameState.soleWinnerId = null
       ch.gameState.isPaused = false

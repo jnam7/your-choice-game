@@ -74,6 +74,7 @@ export function useSocketSync() {
         ...(serverState.serverHostUrl ? { serverHostUrl: serverState.serverHostUrl } : {}),
         currentQuestion: serverState.currentQuestion,
         currentResult: serverState.currentResult,
+        ...(Array.isArray(serverState.roundResults) && serverState.roundResults.length > 0 ? { roundResults: serverState.roundResults } : {}),
         isFinals: Boolean(serverState.isFinals),
         isGameOver: Boolean(serverState.isGameOver),
         soleWinnerId: serverState.soleWinnerId || null,

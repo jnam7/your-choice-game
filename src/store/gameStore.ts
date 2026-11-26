@@ -832,6 +832,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         const isGameOver = true
         const soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null
         const result: RoundResult = {
+          roundNumber: roundNumber || 1,
+          round: roundNumber || 1,
           questionId: currentQuestion.id,
           question: currentQuestion,
           votesA,
@@ -846,15 +848,27 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
           soleWinnerId,
         }
 
-        set((state) => ({
-          players: updatedPlayers,
-          currentResult: result,
-          roundResults: [...state.roundResults, result],
-          usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
-          phase: 'gameover',
-          isGameOver: true,
-          soleWinnerId,
-        }))
+        set((state) => {
+          const existsIndex = state.roundResults.findIndex(
+            (r) => (r.roundNumber === roundNumber || r.round === roundNumber) || r.questionId === currentQuestion.id
+          )
+          const updatedHistory = [...state.roundResults]
+          if (existsIndex >= 0) {
+            updatedHistory[existsIndex] = result
+          } else {
+            updatedHistory.push(result)
+          }
+
+          return {
+            players: updatedPlayers,
+            currentResult: result,
+            roundResults: updatedHistory,
+            usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
+            phase: 'gameover',
+            isGameOver: true,
+            soleWinnerId,
+          }
+        })
         persist()
 
         const channelId = get().channelId || '1'
@@ -881,6 +895,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       // 3명 이상 생존 시 결과 공개(result) 단계로 진입
       const result: RoundResult = {
+        roundNumber: roundNumber || 1,
+        round: roundNumber || 1,
         questionId: currentQuestion.id,
         question: currentQuestion,
         votesA,
@@ -897,15 +913,27 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
 
       const nextPhase: GamePhase = 'result'
 
-      set((state) => ({
-        players: updatedPlayers,
-        currentResult: result,
-        roundResults: [...state.roundResults, result],
-        usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
-        phase: nextPhase,
-        isGameOver: false,
-        soleWinnerId: null,
-      }))
+      set((state) => {
+        const existsIndex = state.roundResults.findIndex(
+          (r) => (r.roundNumber === roundNumber || r.round === roundNumber) || r.questionId === currentQuestion.id
+        )
+        const updatedHistory = [...state.roundResults]
+        if (existsIndex >= 0) {
+          updatedHistory[existsIndex] = result
+        } else {
+          updatedHistory.push(result)
+        }
+
+        return {
+          players: updatedPlayers,
+          currentResult: result,
+          roundResults: updatedHistory,
+          usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
+          phase: nextPhase,
+          isGameOver: false,
+          soleWinnerId: null,
+        }
+      })
       persist()
 
       // 결과 화면이 모든 기기(TV, 모바일, 관리자)에 즉시 동일하게 동기화되도록 admin:sync 브로드캐스트

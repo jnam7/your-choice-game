@@ -43,6 +43,7 @@ interface ServerGameState {
   isMuted?: boolean
   currentQuestion: any
   currentResult: any
+  roundResults: any[]
   isFinals: boolean
   isGameOver: boolean
   soleWinnerId: string | null
@@ -83,6 +84,7 @@ function createInitialGameState(channelId = '1'): ServerGameState {
       isFinals: false,
     },
     currentResult: null,
+    roundResults: [],
     isFinals: false,
     isGameOver: false,
     soleWinnerId: null,
@@ -330,8 +332,9 @@ function computeAndPublishResult(channelId = '1') {
   const isGameOver = survivors.length <= 2 && roundNumber >= 1
   const soleWinnerId = survivors.length === 1 ? survivors[0] : null
 
-  ch.gameState.currentResult = {
+  const roundResultObj = {
     round: roundNumber,
+    roundNumber,
     questionId: currentQuestion ? currentQuestion.id : 0,
     question: currentQuestion || { id: 0, category: '', optionA: '', optionB: '' },
     votesA,
@@ -341,6 +344,20 @@ function computeAndPublishResult(channelId = '1') {
     survivors,
     nonVoters: nonVoterIds.length,
     ruleMode,
+  }
+
+  ch.gameState.currentResult = roundResultObj
+
+  if (!Array.isArray(ch.gameState.roundResults)) {
+    ch.gameState.roundResults = []
+  }
+  const existsIndex = ch.gameState.roundResults.findIndex(
+    (r) => (r.roundNumber === roundNumber || r.round === roundNumber) || r.questionId === currentQuestion?.id
+  )
+  if (existsIndex >= 0) {
+    ch.gameState.roundResults[existsIndex] = roundResultObj
+  } else {
+    ch.gameState.roundResults.push(roundResultObj)
   }
 
   if (isGameOver) {
@@ -468,6 +485,10 @@ function applyAdminSync(updates: any, channelId = '1') {
 
     if (updates.currentResult) {
       ch.gameState.currentResult = updates.currentResult
+    }
+
+    if (Array.isArray(safeUpdates.roundResults)) {
+      ch.gameState.roundResults = safeUpdates.roundResults
     }
 
     broadcastState(ch.id)
@@ -963,6 +984,7 @@ export function syncPlugin(): Plugin {
         ch.gameState.roundNumber = 1
         ch.gameState.votes = {}
         ch.gameState.currentResult = null
+        ch.gameState.roundResults = []
         ch.gameState.isGameOver = false
         ch.gameState.soleWinnerId = null
         ch.gameState.isPaused = false
