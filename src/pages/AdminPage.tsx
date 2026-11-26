@@ -19,6 +19,16 @@ function Logo() {
   )
 }
 
+// ===== 비밀번호 매핑 테이블 =====
+const CHANNEL_PASSWORDS: Record<string, string> = {
+  '1': '1111',
+  '2': '2222',
+  '3': '3333',
+  '4': '4444',
+  '5': '5555',
+  master: '9999',
+}
+
 // ===== 상태 뱃지 =====
 function PhaseBadge({ phase, isFinals, isPaused }: { phase: string; isFinals?: boolean; isPaused?: boolean }) {
   if (isPaused) {
@@ -166,6 +176,58 @@ export default function AdminPage() {
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
   const [adminQrTab, setAdminQrTab] = useState<'wifi' | 'lte'>('wifi')
+
+  // ===== 관리자 인증 상태 (로컬 세션) =====
+  const [authChannel, setAuthChannel] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('admin_auth_channel')
+    }
+    return null
+  })
+  const [loginSelectedChannel, setLoginSelectedChannel] = useState<string>(channelId || '1')
+  const [loginPassword, setLoginPassword] = useState<string>('')
+  const [loginError, setLoginError] = useState<string>('')
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoginError('')
+    const inputPass = loginPassword.trim()
+    if (!inputPass) {
+      setLoginError('비밀번호를 입력해주세요.')
+      return
+    }
+
+    // 마스터 비밀번호 ('9999')인 경우: master 인증
+    if (inputPass === CHANNEL_PASSWORDS.master) {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('admin_auth_channel', 'master')
+      }
+      setAuthChannel('master')
+      handleChannelSwitch(loginSelectedChannel)
+      return
+    }
+
+    // 선택된 채널 비밀번호 확인
+    const expectedPass = CHANNEL_PASSWORDS[loginSelectedChannel]
+    if (inputPass === expectedPass) {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('admin_auth_channel', loginSelectedChannel)
+      }
+      setAuthChannel(loginSelectedChannel)
+      handleChannelSwitch(loginSelectedChannel)
+    } else {
+      setLoginError('비밀번호가 올바르지 않습니다.')
+    }
+  }
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('admin_auth_channel')
+    }
+    setAuthChannel(null)
+    setLoginPassword('')
+    setLoginError('')
+  }
 
   const originUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:5000/'
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
@@ -440,6 +502,65 @@ export default function AdminPage() {
     setShowAddModal(false)
   }
 
+  if (!authChannel) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-navy-dark via-navy to-navy-light flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="glass-card-dark max-w-md w-full p-8 border border-gold/30 rounded-2xl shadow-2xl text-white"
+        >
+          <div className="text-center mb-8">
+            <h1 className="font-display text-2xl text-gold text-shadow-glow mb-2">관리자 인증</h1>
+            <p className="text-gray-400 text-xs tracking-wider">접근 권한이 있는 채널과 비밀번호를 입력해주세요</p>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className="space-y-5">
+            <div>
+              <label className="block text-xs font-bold text-gold/80 mb-2">관리 채널 선택</label>
+              <select
+                value={loginSelectedChannel}
+                onChange={(e) => setLoginSelectedChannel(e.target.value)}
+                className="w-full bg-navy border border-gold/30 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-gold"
+              >
+                {AVAILABLE_CHANNELS.map((ch) => (
+                  <option key={ch} value={ch}>
+                    {ch}채널 관리자
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gold/80 mb-2">비밀번호</label>
+              <input
+                type="password"
+                placeholder="채널 비밀번호 또는 마스터 비밀번호"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full bg-navy border border-gold/30 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-gold placeholder:text-gray-500"
+                autoFocus
+              />
+            </div>
+
+            {loginError && (
+              <p className="text-red-400 text-xs font-bold text-center bg-red-950/40 py-2 rounded border border-red-500/30">
+                ⚠️ {loginError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-gradient-to-r from-gold-dark via-gold to-gold-dark text-navy-dark font-display font-extrabold text-sm rounded-lg shadow-lg hover:brightness-110 active:scale-95 transition-all"
+            >
+              대시보드 접속
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-navy-dark via-navy to-navy-light text-white">
       {/* 관리자 헤더 */}
@@ -456,10 +577,12 @@ export default function AdminPage() {
             <span className="text-[11px] text-gold/80 font-bold px-2">채널</span>
             {AVAILABLE_CHANNELS.map((ch) => {
               const isCurrent = channelId === ch
+              const isVisible = authChannel === 'master' || authChannel === ch
               return (
                 <button
                   key={ch}
                   onClick={() => handleChannelSwitch(ch)}
+                  style={{ display: isVisible ? undefined : 'none' }}
                   className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${isCurrent
                       ? 'bg-gold text-navy-dark shadow font-extrabold scale-105'
                       : 'text-gray-400 hover:text-white hover:bg-gold/10'
@@ -527,6 +650,14 @@ export default function AdminPage() {
           <span className="text-gold text-sm font-bold font-mono bg-gold/10 px-2 py-0.5 rounded border border-gold/20">
             R{roundNumber}
           </span>
+
+          <button
+            onClick={handleLogout}
+            className="px-2.5 py-1.5 bg-red-950/60 hover:bg-red-900 text-red-200 border border-red-700/50 rounded-lg text-xs font-bold shadow transition-all"
+            title="관리자 세션 로그아웃"
+          >
+            로그아웃
+          </button>
         </div>
       </header>
 
