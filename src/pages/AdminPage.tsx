@@ -290,18 +290,28 @@ export default function AdminPage() {
     if (phase !== 'voting' || isPaused) return
 
     const tick = () => {
-      if (votingDeadline) {
-        const remaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
+      const end = (useGameStore.getState() as any).votingEndTime || votingDeadline
+      if (end) {
+        const remaining = Math.max(0, Math.ceil((end - Date.now()) / 1000))
         setVotingTimeLeft(remaining)
+        if (remaining <= 0 && useGameStore.getState().phase === 'voting') {
+          endVoting()
+        }
       } else {
-        setVotingTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
+        setVotingTimeLeft((prev) => {
+          const next = prev > 0 ? prev - 1 : 0
+          if (next <= 0 && useGameStore.getState().phase === 'voting') {
+            endVoting()
+          }
+          return next
+        })
       }
     }
 
     tick()
-    const timer = setInterval(tick, 250)
+    const timer = setInterval(tick, 100)
     return () => clearInterval(timer)
-  }, [phase, isPaused, votingDeadline])
+  }, [phase, isPaused, votingDeadline, endVoting])
 
   // 2. 3초 결과 서스펜스 카운트다운 (Revealing Phase) - 3초 후 결과 공개 (서버에 위임하거나 1회만 호출)
   const [revealingTimeLeft, setRevealingTimeLeft] = useState(3)

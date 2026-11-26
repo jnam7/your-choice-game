@@ -196,8 +196,9 @@ function TVLobby() {
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [localIp, setLocalIp] = useState('192.168.40.111')
 
-  // 대기실(lobby) 상태에서 게임 오디오 에셋 브라우저 메모리에 즉시 프리로드 캐싱
+  // 대기실(lobby) 상태에서 AudioContext 즉시 생성/resume 및 오디오 에셋 사전 캐싱
   useEffect(() => {
+    unlockAudioContext()
     preloadAudioAssets()
   }, [])
 
@@ -591,14 +592,20 @@ function TVVoting() {
   const roundNumber = useGameStore((s) => s.roundNumber)
   const isFinals = useGameStore((s) => s.isFinals)
   const timeLimit = useGameStore((s) => s.timeLimit)
-  const votingDeadline = useGameStore((s) => s.votingDeadline)
+  const votingDeadline = useGameStore((s) => (s as any).votingEndTime || s.votingDeadline)
   const ruleMode = useGameStore((s) => s.ruleMode)
   const isPaused = useGameStore((s) => s.isPaused)
   const alivePlayers = playerList.filter((p) => p && p.status === 'alive')
   const voteCount = Object.keys(votes).length
 
-  const [timeLeft, setTimeLeft] = useState(timeLimit || 15)
+  const [timeLeft, setTimeLeft] = useState(() => {
+    if (votingDeadline) {
+      return Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
+    }
+    return timeLimit || 15
+  })
 
+  // 절대 타임스탬프 기반 타이머: setInterval(timeLeft - 1) 완전 폐기 및 100ms 정밀 갱신
   useEffect(() => {
     if (isPaused) return
 
@@ -606,12 +613,22 @@ function TVVoting() {
       if (votingDeadline) {
         const remaining = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
         setTimeLeft(remaining)
+        // 0초 도달 시 지체 없이 결과 공개(revealing) 화면으로 전환하여 0초 멈춤 방지
+        if (remaining <= 0 && useGameStore.getState().phase === 'voting') {
+          useGameStore.getState().startRevealing()
+        }
       } else {
-        setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
+        setTimeLeft((prev) => {
+          const next = prev > 0 ? prev - 1 : 0
+          if (next <= 0 && useGameStore.getState().phase === 'voting') {
+            useGameStore.getState().startRevealing()
+          }
+          return next
+        })
       }
     }
     tick()
-    const timer = setInterval(tick, 250)
+    const timer = setInterval(tick, 100)
     return () => clearInterval(timer)
   }, [votingDeadline, isPaused])
 
@@ -1337,10 +1354,11 @@ export default function TVPage() {
     }
   }
 
-  // BGM 오디오 객체 단일 인스턴스 초기화 및 에셋 사전 캐싱
+  // BGM 오디오 객체 단일 인스턴스 초기화 및 에셋 사전 캐싱 (game_start.mp3 사전 로드)
   useEffect(() => {
+    unlockAudioContext()
     preloadAudioAssets()
-    const audio = new Audio('/audio/bgm.mp3')
+    const audio = new Audio('/sounds/game_start.mp3')
     audio.preload = 'auto'
     audio.loop = true
     audio.muted = false
@@ -1348,8 +1366,12 @@ export default function TVPage() {
     bgmRef.current = audio
 
     audio.onerror = () => {
-      // /audio/bgm.mp3 실패 시 /bgm.mp3로 fallback
-      if (audio.src.includes('/audio/bgm.mp3')) {
+      // /sounds/game_start.mp3 실패 시 /audio/bgm.mp3 -> /bgm.mp3로 fallback
+      if (audio.src.includes('/sounds/game_start.mp3')) {
+        audio.src = '/audio/bgm.mp3'
+        audio.preload = 'auto'
+        audio.load()
+      } else if (audio.src.includes('/audio/bgm.mp3')) {
         audio.src = '/bgm.mp3'
         audio.preload = 'auto'
         audio.load()
@@ -1365,6 +1387,37 @@ export default function TVPage() {
       bgmRef.current = null
     }
   }, [])
+
+  // 소켓 이벤트(게임 시작/라운드 시작) 수신 즉시 0초 딜레이 없는 오디오 즉각 재생
+  useEffect(() => {
+    const handleImmediateRoundAudio = () => {
+      unlockAudioContext()
+      const audio = bgmRef.current
+      if (audio) {
+        audio.muted = false
+        audio.volume = masterVolume ?? 0.8
+        if (audio.paused || !isPlayingRef.current) {
+          audio.currentTime = 0
+          audio.play().then(() => {
+            isPlayingRef.current = true
+          }).catch((err) => {
+            console.warn('[TV Instant Autoplay notice]:', err?.message)
+          })
+        }
+      }
+      playRoundStartSound()
+    }
+
+    socket.on('game:round_started', handleImmediateRoundAudio)
+    socket.on('game:voting_started', handleImmediateRoundAudio)
+    socket.on('start_voting', handleImmediateRoundAudio)
+
+    return () => {
+      socket.off('game:round_started', handleImmediateRoundAudio)
+      socket.off('game:voting_started', handleImmediateRoundAudio)
+      socket.off('start_voting', handleImmediateRoundAudio)
+    }
+  }, [masterVolume])
 
   // 3. 남은 시간 5초 이하 시 BGM 볼륨 25% 자동 감쇠 (Audio Ducking) 적용
   useEffect(() => {

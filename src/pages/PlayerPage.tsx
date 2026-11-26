@@ -530,14 +530,15 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
   }, [currentQuestion?.id, roundNumber, myVote])
 
   const total = timeLimit || 15
+  const votingEndTime = useGameStore((s) => (s as any).votingEndTime || s.votingDeadline)
   const [remaining, setRemaining] = useState<number>(() => {
-    if (votingDeadline) {
-      return Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
+    if (votingEndTime) {
+      return Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000))
     }
     return timeLeft || total
   })
 
-  // 실시간 15초 카운트다운 (200ms 주기로 계산하여 모바일에서 실시간으로 초가 줄어듦, isPaused 시 정지)
+  // 실시간 15초 카운트다운 (절대 종료 시각 votingEndTime 기반 100ms 정밀 동기화)
   useEffect(() => {
     if (isPaused) {
       if (timeLeft !== undefined) {
@@ -547,17 +548,17 @@ function VoteScreen({ currentPlayer }: { currentPlayer?: Player | null }) {
     }
 
     const calc = () => {
-      if (votingDeadline) {
-        const sec = Math.max(0, Math.ceil((votingDeadline - Date.now()) / 1000))
+      if (votingEndTime) {
+        const sec = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000))
         setRemaining(sec)
       } else if (timeLeft !== undefined) {
         setRemaining(timeLeft)
       }
     }
     calc()
-    const timer = setInterval(calc, 200)
+    const timer = setInterval(calc, 100)
     return () => clearInterval(timer)
-  }, [votingDeadline, timeLeft, isPaused])
+  }, [votingEndTime, timeLeft, isPaused])
 
   const handleVote = (choice: 'A' | 'B') => {
     if (isEliminated || selected || myVote || !effectiveId || isPaused || remaining <= 0) return

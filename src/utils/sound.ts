@@ -33,6 +33,14 @@ export function unlockAudioContext(): void {
   if (ctx.state === 'suspended') {
     ctx.resume().catch(() => {})
   }
+  // 브라우저 Autoplay Restriction을 원천 해제하기 위한 초경량 무음 버퍼 재생
+  try {
+    const silentBuffer = ctx.createBuffer(1, 1, 22050)
+    const source = ctx.createBufferSource()
+    source.buffer = silentBuffer
+    source.connect(ctx.destination)
+    source.start(0)
+  } catch {}
 }
 
 // 음소거 제어
@@ -313,17 +321,18 @@ export function preloadAudioAssets(): void {
   if (typeof window === 'undefined') return
   try {
     // 1) Web Audio API 컨텍스트 깨우기 및 워밍업
-    const ctx = getAudioContext()
-    if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {})
-    }
+    unlockAudioContext()
 
-    // 2) BGM 오디오 파일 백그라운드 프리로드 캐싱 (preload="auto")
+    // 2) BGM 및 시작 사운드 파일 백그라운드 프리로드 캐싱 (preload="auto")
     const preAudio = new Audio()
     preAudio.preload = 'auto'
-    preAudio.src = '/audio/bgm.mp3'
+    preAudio.src = '/sounds/game_start.mp3'
     preAudio.onerror = () => {
-      preAudio.src = '/bgm.mp3'
+      preAudio.src = '/audio/bgm.mp3'
+      preAudio.onerror = () => {
+        preAudio.src = '/bgm.mp3'
+        preAudio.load()
+      }
       preAudio.load()
     }
     preAudio.load()

@@ -88,6 +88,7 @@ const defaultInitialState: GameState = {
   isGameOver: false,
   soleWinnerId: null,
   votingDeadline: undefined,
+  votingEndTime: undefined,
   players: [],
   votes: {},
   roundResults: [],
@@ -615,14 +616,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         timeLimit: limit,
         timeLeft: limit,
         votingDeadline: deadline,
+        votingEndTime: deadline,
         isPaused: false,
         votes: {},
       })
       persist()
 
-      // 3번 서바이벌 퀴즈 규격 이벤트 전송
+      // 3번 서바이벌 퀴즈 규격 이벤트 전송 (절대 타임스탬프 votingEndTime 포함)
       const channelId = get().channelId || '1'
-      socket.emit('admin:start_voting', { channelId, timeLimit: limit })
+      socket.emit('admin:start_voting', { channelId, timeLimit: limit, votingDeadline: deadline, votingEndTime: deadline })
 
       // 생존해 있는 더미 참가자 자동 무작위 투표 시뮬레이션 가동
       get().simulateDummyVotes()
@@ -634,6 +636,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       set({
         phase: 'revealing',
         timeLeft: 3,
+        votingDeadline: undefined,
+        votingEndTime: undefined,
         isPaused: false,
       })
       persist()

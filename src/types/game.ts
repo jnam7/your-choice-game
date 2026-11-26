@@ -80,6 +80,7 @@ export interface GameState {
   isGameOver?: boolean
   soleWinnerId?: string | null
   votingDeadline?: number
+  votingEndTime?: number
 
   // 플레이어
   players: Player[]

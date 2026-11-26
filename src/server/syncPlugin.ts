@@ -46,6 +46,7 @@ interface ServerGameState {
   isPaused: boolean
   timeLimit: number
   votingDeadline: number | null
+  votingEndTime?: number | null
   timeLeft: number
   players: Player[]
   votes: Record<string, 'A' | 'B'>
@@ -56,6 +57,8 @@ interface ChannelRoom {
   id: string
   gameState: ServerGameState
   lastNextRoundTriggerTime: number
+  votingTimer?: NodeJS.Timeout | null
+  revealingTimer?: NodeJS.Timeout | null
 }
 
 function createInitialGameState(channelId = '1'): ServerGameState {
@@ -121,6 +124,232 @@ function broadcastState(channelId = '1') {
   if (ch.id === '1') {
     ioInstance.to(SOCKET_ROOM_MAIN).emit('game:state_sync', ch.gameState)
     ioInstance.to(SOCKET_ROOM_MAIN).emit('state:sync', ch.gameState)
+  }
+}
+
+// 채널별 투표 쓰로틀링 브로드캐스트 (150ms 단위 배치)
+const voteThrottleTimers = new Map<string, NodeJS.Timeout>()
+
+function scheduleThrottledVoteBroadcast(channelId = '1') {
+  const ch = getChannel(channelId)
+  if (voteThrottleTimers.has(ch.id)) return
+
+  const timer = setTimeout(() => {
+    voteThrottleTimers.delete(ch.id)
+    if (!ioInstance || ch.gameState.phase !== 'voting') return
+
+    const room = getChannelRoom(ch.id)
+    const votePayload = {
+      channelId: ch.id,
+      votes: ch.gameState.votes,
+      voteCount: Object.keys(ch.gameState.votes).length,
+    }
+    ioInstance.to(room).emit('game:votes_update', votePayload)
+    ioInstance.to(room).emit('votes:update', votePayload)
+    if (ch.id === '1') {
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('game:votes_update', votePayload)
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('votes:update', votePayload)
+    }
+  }, 150)
+
+  voteThrottleTimers.set(ch.id, timer)
+}
+
+function clearAllTimers(channelId = '1') {
+  const ch = getChannel(channelId)
+  if (ch.votingTimer) {
+    clearTimeout(ch.votingTimer)
+    ch.votingTimer = null
+  }
+  if (ch.revealingTimer) {
+    clearTimeout(ch.revealingTimer)
+    ch.revealingTimer = null
+  }
+  if (voteThrottleTimers.has(ch.id)) {
+    clearTimeout(voteThrottleTimers.get(ch.id)!)
+    voteThrottleTimers.delete(ch.id)
+  }
+}
+
+function startServerVoting(channelId = '1', limit = 15) {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  const duration = Number(limit) || 15
+  const votingEndTime = Date.now() + duration * 1000
+
+  ch.gameState.phase = 'voting'
+  ch.gameState.timeLimit = duration
+  ch.gameState.votingDeadline = votingEndTime
+  ch.gameState.votingEndTime = votingEndTime
+  ch.gameState.timeLeft = duration
+  ch.gameState.isPaused = false
+  ch.gameState.votes = {}
+
+  console.log(`⏱️ [Vite Plugin CH ${ch.id} VOTING] ${duration}초 투표 시작 (종료 시각: ${votingEndTime})`)
+  broadcastState(ch.id)
+  if (ioInstance) {
+    const room = getChannelRoom(ch.id)
+    const payload = {
+      channelId: ch.id,
+      roundNumber: ch.gameState.roundNumber,
+      question: ch.gameState.currentQuestion,
+      timeLimit: duration,
+      votingDeadline: votingEndTime,
+      votingEndTime: votingEndTime,
+    }
+    ioInstance.to(room).emit('game:round_started', payload)
+    ioInstance.to(room).emit('game:voting_started', payload)
+    ioInstance.to(room).emit('start_voting', payload)
+    if (ch.id === '1') {
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('game:voting_started', payload)
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('start_voting', payload)
+    }
+  }
+
+  // 절대 타임스탬프 기반 서버 강제 투표 마감
+  const delayMs = Math.max(0, votingEndTime - Date.now())
+  ch.votingTimer = setTimeout(() => {
+    ch.votingTimer = null
+    if (ch.gameState.phase !== 'voting' || ch.gameState.isPaused) return
+    console.log(`⏰ [Vite Plugin CH ${ch.id}] votingEndTime 도달 -> 서버 강제 투표 마감 및 결과 서스펜스 진입`)
+    startServerRevealing(ch.id)
+  }, delayMs)
+}
+
+function startServerRevealing(channelId = '1') {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  ch.gameState.phase = 'revealing'
+  ch.gameState.timeLeft = 3
+  ch.gameState.votingDeadline = null
+  ch.gameState.votingEndTime = null
+  ch.gameState.isPaused = false
+  broadcastState(ch.id)
+
+  if (ioInstance) {
+    const room = getChannelRoom(ch.id)
+    ioInstance.to(room).emit('game:revealing', { channelId: ch.id })
+    ioInstance.to(room).emit('revealing', { channelId: ch.id })
+    if (ch.id === '1') {
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('game:revealing', { channelId: ch.id })
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('revealing', { channelId: ch.id })
+    }
+  }
+
+  ch.revealingTimer = setTimeout(() => {
+    ch.revealingTimer = null
+    if (ch.gameState.phase !== 'revealing' || ch.gameState.isPaused) return
+    computeAndPublishResult(ch.id)
+  }, 3000)
+}
+
+function computeAndPublishResult(channelId = '1') {
+  const ch = getChannel(channelId)
+  clearAllTimers(ch.id)
+  const { votes, players, currentQuestion, roundNumber, ruleMode } = ch.gameState
+
+  const eligiblePlayers = players.filter((p) => {
+    if (p.eliminatedRound && p.eliminatedRound < roundNumber) return false
+    return true
+  })
+  const eligibleIds = new Set(eligiblePlayers.map((p) => p.id))
+
+  const validVotes: Record<string, 'A' | 'B'> = {}
+  for (const [pId, choice] of Object.entries(votes || {})) {
+    if (eligibleIds.size === 0 || eligibleIds.has(pId)) {
+      if (choice === 'A' || choice === 'B') {
+        validVotes[pId] = choice
+      }
+    }
+  }
+
+  let votesA = 0
+  let votesB = 0
+  for (const choice of Object.values(validVotes)) {
+    if (choice === 'A') votesA++
+    else if (choice === 'B') votesB++
+  }
+
+  const voterIds = Object.keys(validVotes)
+  const nonVoterIds = eligiblePlayers
+    .filter((p) => !voterIds.includes(p.id))
+    .map((p) => p.id)
+
+  let majority: 'A' | 'B' | 'tie'
+  let eliminatedIds: string[] = []
+  const isMinorityMode = (ruleMode === 'minority')
+
+  if (votesA === votesB) {
+    majority = 'tie'
+    eliminatedIds = [...nonVoterIds]
+  } else if (votesA > votesB) {
+    if (isMinorityMode) {
+      majority = 'B'
+      const majorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+      eliminatedIds = [...majorityIds, ...nonVoterIds]
+    } else {
+      majority = 'A'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    }
+  } else {
+    if (isMinorityMode) {
+      majority = 'A'
+      const majorityIds = Object.entries(validVotes).filter(([, c]) => c === 'B').map(([id]) => id)
+      eliminatedIds = [...majorityIds, ...nonVoterIds]
+    } else {
+      majority = 'B'
+      const minorityIds = Object.entries(validVotes).filter(([, c]) => c === 'A').map(([id]) => id)
+      eliminatedIds = [...minorityIds, ...nonVoterIds]
+    }
+  }
+
+  const eliminatedSet = new Set(eliminatedIds)
+  const survivors: string[] = []
+  ch.gameState.players.forEach((p) => {
+    if (eligibleIds.has(p.id)) {
+      if (eliminatedSet.has(p.id)) {
+        p.status = 'eliminated'
+        p.isAlive = false
+        p.eliminatedRound = roundNumber
+      } else {
+        p.status = 'alive'
+        p.isAlive = true
+        survivors.push(p.id)
+      }
+    }
+  })
+
+  const isGameOver = survivors.length <= 2 && roundNumber >= 1
+  const soleWinnerId = survivors.length === 1 ? survivors[0] : null
+
+  ch.gameState.phase = 'result'
+  ch.gameState.isGameOver = isGameOver
+  ch.gameState.soleWinnerId = soleWinnerId
+  ch.gameState.timeLeft = 5
+  ch.gameState.currentResult = {
+    round: roundNumber,
+    questionId: currentQuestion ? currentQuestion.id : 0,
+    question: currentQuestion || { id: 0, category: '', optionA: '', optionB: '' },
+    votesA,
+    votesB,
+    majority,
+    eliminated: eliminatedIds,
+    survivors,
+    nonVoters: nonVoterIds.length,
+    ruleMode,
+  }
+
+  broadcastState(ch.id)
+  if (ioInstance) {
+    const room = getChannelRoom(ch.id)
+    ioInstance.to(room).emit('game:result_revealed', ch.gameState.currentResult)
+    ioInstance.to(room).emit('reveal_result', ch.gameState.currentResult)
+    if (ch.id === '1') {
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('game:result_revealed', ch.gameState.currentResult)
+      ioInstance.to(SOCKET_ROOM_MAIN).emit('reveal_result', ch.gameState.currentResult)
+    }
   }
 }
 
@@ -342,7 +571,7 @@ export function syncPlugin(): Plugin {
       }
 
       ch.gameState.votes[playerId] = choice
-      broadcastState(ch.id)
+      scheduleThrottledVoteBroadcast(ch.id)
       sendJson(res, 200, { success: true, channelId: ch.id })
       return
     }
@@ -368,25 +597,25 @@ export function syncPlugin(): Plugin {
       const limit = Number(body.timeLimit) || ch.gameState.timeLimit || 15
       ch.gameState.timeLimit = limit
       if (body.autoStartVoting !== false) {
-        ch.gameState.phase = 'voting'
-        ch.gameState.votingDeadline = Date.now() + limit * 1000
-        ch.gameState.timeLeft = limit
+        startServerVoting(ch.id, limit)
       } else {
         ch.gameState.phase = 'question'
         ch.gameState.votingDeadline = null
+        ;(ch.gameState as any).votingEndTime = null
         ch.gameState.timeLeft = limit
+        broadcastState(ch.id)
+        const room = getChannelRoom(ch.id)
+        const payload = {
+          channelId: ch.id,
+          roundNumber: 1,
+          question: ch.gameState.currentQuestion,
+          timeLimit: ch.gameState.timeLimit,
+          votingDeadline: null,
+          votingEndTime: null,
+        }
+        ioInstance?.to(room).emit('game:round_started', payload)
+        if (ch.id === '1') ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
       }
-      broadcastState(ch.id)
-      const room = getChannelRoom(ch.id)
-      const payload = {
-        channelId: ch.id,
-        roundNumber: 1,
-        question: ch.gameState.currentQuestion,
-        timeLimit: ch.gameState.timeLimit,
-        votingDeadline: ch.gameState.votingDeadline,
-      }
-      ioInstance?.to(room).emit('game:round_started', payload)
-      if (ch.id === '1') ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
       sendJson(res, 200, { success: true, state: ch.gameState, channelId: ch.id })
       return
     }
@@ -691,7 +920,7 @@ export function syncPlugin(): Plugin {
             return
           }
           ch.gameState.votes[playerId] = choice
-          broadcastState(ch.id)
+          scheduleThrottledVoteBroadcast(ch.id)
           if (callback) callback({ success: true })
         } catch (e: any) {
           if (callback) callback({ success: false, error: e.message })
@@ -701,6 +930,7 @@ export function syncPlugin(): Plugin {
       socket.on('admin:start_game', (data: any, callback?: any) => {
         const chId = getEventChannelId(data)
         const ch = getChannel(chId)
+        clearAllTimers(ch.id)
         ch.gameState.roundNumber = 1
         ch.gameState.votes = {}
         ch.gameState.currentResult = null
@@ -717,26 +947,48 @@ export function syncPlugin(): Plugin {
         const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
         ch.gameState.timeLimit = limit
         if (data?.autoStartVoting !== false) {
-          ch.gameState.phase = 'voting'
-          ch.gameState.votingDeadline = Date.now() + limit * 1000
-          ch.gameState.timeLeft = limit
+          startServerVoting(ch.id, limit)
         } else {
           ch.gameState.phase = 'question'
           ch.gameState.votingDeadline = null
+          ;(ch.gameState as any).votingEndTime = null
           ch.gameState.timeLeft = limit
+          broadcastState(ch.id)
+          const room = getChannelRoom(ch.id)
+          const payload = {
+            channelId: ch.id,
+            roundNumber: 1,
+            question: ch.gameState.currentQuestion,
+            timeLimit: ch.gameState.timeLimit,
+            votingDeadline: null,
+            votingEndTime: null,
+          }
+          ioInstance?.to(room).emit('game:round_started', payload)
+          if (ch.id === '1') ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
         }
-        broadcastState(ch.id)
-        const room = getChannelRoom(ch.id)
-        const payload = {
-          channelId: ch.id,
-          roundNumber: 1,
-          question: ch.gameState.currentQuestion,
-          timeLimit: ch.gameState.timeLimit,
-          votingDeadline: ch.gameState.votingDeadline,
-        }
-        ioInstance?.to(room).emit('game:round_started', payload)
-        if (ch.id === '1') ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
         if (callback) callback({ success: true, phase: ch.gameState.phase, channelId: ch.id })
+      })
+
+      socket.on('admin:start_voting', (data: any, callback?: any) => {
+        try {
+          const chId = getEventChannelId(data)
+          const ch = getChannel(chId)
+          const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
+          startServerVoting(ch.id, limit)
+          if (callback) callback({ success: true })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
+      })
+
+      socket.on('admin:end_voting', (data: any, callback?: any) => {
+        try {
+          const chId = getEventChannelId(data)
+          startServerRevealing(chId)
+          if (callback) callback({ success: true })
+        } catch (e: any) {
+          if (callback) callback({ success: false, error: e.message })
+        }
       })
 
       socket.on('admin:next_round', (data: any, callback?: any) => {
@@ -758,21 +1010,7 @@ export function syncPlugin(): Plugin {
         ch.gameState.currentResult = null
         if (data?.question) ch.gameState.currentQuestion = data.question
         const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
-        ch.gameState.timeLimit = limit
-        ch.gameState.phase = 'voting'
-        ch.gameState.votingDeadline = Date.now() + limit * 1000
-        ch.gameState.timeLeft = limit
-        broadcastState(ch.id)
-        const room = getChannelRoom(ch.id)
-        const payload = {
-          channelId: ch.id,
-          roundNumber: ch.gameState.roundNumber,
-          question: ch.gameState.currentQuestion,
-          timeLimit: ch.gameState.timeLimit,
-          votingDeadline: ch.gameState.votingDeadline,
-        }
-        ioInstance?.to(room).emit('game:round_started', payload)
-        if (ch.id === '1') ioInstance?.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
+        startServerVoting(ch.id, limit)
         if (callback) callback({ success: true })
       })
 

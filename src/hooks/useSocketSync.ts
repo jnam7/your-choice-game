@@ -79,6 +79,7 @@ export function useSocketSync() {
         isPaused: Boolean(serverState.isPaused),
         timeLimit: serverState.timeLimit || 15,
         votingDeadline: serverState.votingDeadline,
+        votingEndTime: serverState.votingEndTime || serverState.votingDeadline,
         timeLeft: calculatedTimeLeft,
         players: incomingPlayers,
         votes: serverState.votes || {},
@@ -136,6 +137,21 @@ export function useSocketSync() {
       if (newTunnelUrl && newTunnelUrl.startsWith('http')) {
         setServerHostUrl(newTunnelUrl)
       }
+    }
+
+    const handleVotesUpdate = (data: any) => {
+      if (!data) return
+      if (data.channelId && data.channelId !== effectiveChannelId) return
+      if (data.votes) {
+        useGameStore.setState((prev) => ({
+          votes: { ...prev.votes, ...data.votes },
+        }))
+      }
+    }
+
+    const handleRevealing = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
+      useGameStore.getState().startRevealing()
     }
 
     const handlePlayersUpdate = (data: any) => {
@@ -241,6 +257,10 @@ export function useSocketSync() {
     socket.on('game:player_joined', handlePlayersUpdate)
     socket.on('player:joined', handlePlayersUpdate)
     socket.on('players:update', handlePlayersUpdate)
+    socket.on('game:votes_update', handleVotesUpdate)
+    socket.on('votes:update', handleVotesUpdate)
+    socket.on('game:revealing', handleRevealing)
+    socket.on('revealing', handleRevealing)
     socket.on('game:round_started', handleRoundStarted)
     socket.on('game:force_lobby', handleForceLobby)
     socket.on('game:set_reset', handleForceLobby)
@@ -282,6 +302,10 @@ export function useSocketSync() {
       socket.off('game:player_joined', handlePlayersUpdate)
       socket.off('player:joined', handlePlayersUpdate)
       socket.off('players:update', handlePlayersUpdate)
+      socket.off('game:votes_update', handleVotesUpdate)
+      socket.off('votes:update', handleVotesUpdate)
+      socket.off('game:revealing', handleRevealing)
+      socket.off('revealing', handleRevealing)
       socket.off('game:round_started', handleRoundStarted)
       socket.off('game:rule_mode_changed', handleRuleModeChanged)
       socket.off('rule_mode_changed', handleRuleModeChanged)

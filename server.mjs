@@ -133,6 +133,34 @@ function broadcastState(channelId = '1') {
   }
 }
 
+// 채널별 투표 쓰로틀링 브로드캐스트 (150ms 단위 배치)
+const voteThrottleTimers = new Map()
+
+function scheduleThrottledVoteBroadcast(channelId = '1') {
+  const ch = getChannel(channelId)
+  if (voteThrottleTimers.has(ch.id)) return
+
+  const timer = setTimeout(() => {
+    voteThrottleTimers.delete(ch.id)
+    if (ch.gameState.phase !== 'voting') return
+
+    const room = getChannelRoom(ch.id)
+    const votePayload = {
+      channelId: ch.id,
+      votes: ch.gameState.votes,
+      voteCount: Object.keys(ch.gameState.votes).length,
+    }
+    io.to(room).emit('game:votes_update', votePayload)
+    io.to(room).emit('votes:update', votePayload)
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:votes_update', votePayload)
+      io.to(SOCKET_ROOM_MAIN).emit('votes:update', votePayload)
+    }
+  }, 150)
+
+  voteThrottleTimers.set(ch.id, timer)
+}
+
 function clearAllTimers(channelId = '1') {
   const ch = getChannel(channelId)
   if (ch.votingTimer) {
@@ -147,40 +175,55 @@ function clearAllTimers(channelId = '1') {
     clearTimeout(ch.resultTransitionTimer)
     ch.resultTransitionTimer = null
   }
+  if (voteThrottleTimers.has(ch.id)) {
+    clearTimeout(voteThrottleTimers.get(ch.id))
+    voteThrottleTimers.delete(ch.id)
+  }
 }
 
-// 1. 서버 주도 투표 타이머 시작
+// 1. 서버 주도 투표 타이머 시작 (절대 타임스탬프 기반)
 function startServerVoting(channelId = '1', limit = 15) {
   const ch = getChannel(channelId)
   clearAllTimers(ch.id)
+  const duration = Number(limit) || 15
+  const votingEndTime = Date.now() + duration * 1000
+
   ch.gameState.phase = 'voting'
-  ch.gameState.timeLimit = limit
-  ch.gameState.votingDeadline = Date.now() + limit * 1000
-  ch.gameState.timeLeft = limit
+  ch.gameState.timeLimit = duration
+  ch.gameState.votingDeadline = votingEndTime
+  ch.gameState.votingEndTime = votingEndTime
+  ch.gameState.timeLeft = duration
   ch.gameState.isPaused = false
   ch.gameState.votes = {}
 
-  console.log(`⏱️ [CH ${ch.id} VOTING] ${limit}초 투표 시작`)
+  console.log(`⏱️ [CH ${ch.id} VOTING] ${duration}초 투표 시작 (종료 시각: ${votingEndTime})`)
   broadcastState(ch.id)
   const room = getChannelRoom(ch.id)
   const payload = {
     channelId: ch.id,
     roundNumber: ch.gameState.roundNumber,
     question: ch.gameState.currentQuestion,
-    timeLimit: limit,
-    votingDeadline: ch.gameState.votingDeadline,
+    timeLimit: duration,
+    votingDeadline: votingEndTime,
+    votingEndTime: votingEndTime,
   }
   io.to(room).emit('game:round_started', payload)
+  io.to(room).emit('game:voting_started', payload)
+  io.to(room).emit('start_voting', payload)
   if (ch.id === '1') {
     io.to(SOCKET_ROOM_MAIN).emit('game:round_started', payload)
+    io.to(SOCKET_ROOM_MAIN).emit('game:voting_started', payload)
+    io.to(SOCKET_ROOM_MAIN).emit('start_voting', payload)
   }
 
+  // votingEndTime 도달 시 클라이언트 응답 여부와 상관없이 무조건 서버가 강제로 투표 마감
+  const delayMs = Math.max(0, votingEndTime - Date.now())
   ch.votingTimer = setTimeout(() => {
     ch.votingTimer = null
     if (ch.gameState.phase !== 'voting' || ch.gameState.isPaused) return
-    console.log(`⏰ [CH ${ch.id} VOTING] 15초 만료 -> 결과 집계 서스펜스 단계 진입`)
+    console.log(`⏰ [CH ${ch.id} VOTING] votingEndTime 도달 -> 서버 강제 투표 마감 및 결과 서스펜스 진입`)
     startServerRevealing(ch.id)
-  }, limit * 1000)
+  }, delayMs)
 }
 
 // 2. 서버 주도 3초 서스펜스 타이머 시작
@@ -190,8 +233,17 @@ function startServerRevealing(channelId = '1') {
   ch.gameState.phase = 'revealing'
   ch.gameState.timeLeft = 3
   ch.gameState.votingDeadline = null
+  ch.gameState.votingEndTime = null
   ch.gameState.isPaused = false
   broadcastState(ch.id)
+
+  const room = getChannelRoom(ch.id)
+  io.to(room).emit('game:revealing', { channelId: ch.id })
+  io.to(room).emit('revealing', { channelId: ch.id })
+  if (ch.id === '1') {
+    io.to(SOCKET_ROOM_MAIN).emit('game:revealing', { channelId: ch.id })
+    io.to(SOCKET_ROOM_MAIN).emit('revealing', { channelId: ch.id })
+  }
 
   ch.revealingTimer = setTimeout(() => {
     ch.revealingTimer = null
@@ -739,8 +791,8 @@ io.on('connection', (socket) => {
       }
 
       ch.gameState.votes[playerId] = choice
-      console.log(`🗳️ [CH ${ch.id} VOTE] ${player ? player.nickname : playerId} -> [${choice}] (총: ${Object.keys(ch.gameState.votes).length})`)
-      broadcastState(ch.id)
+      // 투표 폭주 시 전체 동기화 브로드캐스트 대신 150ms 쓰로틀링 배치 전송
+      scheduleThrottledVoteBroadcast(ch.id)
       if (callback) callback({ success: true })
     } catch (e) {
       if (callback) callback({ success: false, error: e.message })
@@ -1426,7 +1478,7 @@ const handleHttpVote = (req, res) => {
       return res.status(403).json({ success: false, error: '이미 탈락한 참가자는 투표할 수 없습니다.' })
     }
     ch.gameState.votes[playerId] = choice
-    broadcastState(ch.id)
+    scheduleThrottledVoteBroadcast(ch.id)
     res.json({ success: true, channelId: ch.id })
   } catch (e) {
     res.status(500).json({ success: false, error: e.message })
