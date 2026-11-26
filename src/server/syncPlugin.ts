@@ -330,10 +330,6 @@ function computeAndPublishResult(channelId = '1') {
   const isGameOver = survivors.length <= 2 && roundNumber >= 1
   const soleWinnerId = survivors.length === 1 ? survivors[0] : null
 
-  ch.gameState.phase = 'result'
-  ch.gameState.isGameOver = isGameOver
-  ch.gameState.soleWinnerId = soleWinnerId
-  ch.gameState.timeLeft = 5
   ch.gameState.currentResult = {
     round: roundNumber,
     questionId: currentQuestion ? currentQuestion.id : 0,
@@ -346,6 +342,33 @@ function computeAndPublishResult(channelId = '1') {
     nonVoters: nonVoterIds.length,
     ruleMode,
   }
+
+  if (isGameOver) {
+    ch.gameState.phase = 'gameover'
+    ch.gameState.isGameOver = true
+    ch.gameState.soleWinnerId = soleWinnerId
+    broadcastState(ch.id)
+    if (ioInstance) {
+      const room = getChannelRoom(ch.id)
+      const payload = {
+        channelId: ch.id,
+        survivors: ch.gameState.players.filter((p) => survivors.includes(p.id)),
+        alivePlayers: ch.gameState.players.filter((p) => survivors.includes(p.id)),
+        winnerCount: survivors.length,
+        soleWinnerId,
+      }
+      ioInstance.to(room).emit('game:game_over', payload)
+      if (ch.id === '1') {
+        ioInstance.to(SOCKET_ROOM_MAIN).emit('game:game_over', payload)
+      }
+    }
+    return
+  }
+
+  ch.gameState.phase = 'result'
+  ch.gameState.isGameOver = false
+  ch.gameState.soleWinnerId = null
+  ch.gameState.timeLeft = 5
 
   broadcastState(ch.id)
   if (ioInstance) {
@@ -1017,6 +1040,31 @@ export function syncPlugin(): Plugin {
         if (data?.question) ch.gameState.currentQuestion = data.question
         const limit = Number(data?.timeLimit) || ch.gameState.timeLimit || 15
         startServerVoting(ch.id, limit)
+        if (callback) callback({ success: true })
+      })
+
+      socket.on('admin:game_over', (data: any, callback?: any) => {
+        const chId = getEventChannelId(data)
+        const ch = getChannel(chId)
+        ch.gameState.phase = 'gameover'
+        ch.gameState.isGameOver = true
+        const alivePlayers = Array.isArray(data?.alivePlayers) ? data.alivePlayers : ch.gameState.players.filter((p) => p.status === 'alive')
+        ch.gameState.soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : (data?.soleWinnerId || null)
+        broadcastState(ch.id)
+        if (ioInstance) {
+          const room = getChannelRoom(ch.id)
+          const payload = {
+            channelId: ch.id,
+            survivors: alivePlayers,
+            alivePlayers,
+            winnerCount: alivePlayers.length,
+            soleWinnerId: ch.gameState.soleWinnerId,
+          }
+          ioInstance.to(room).emit('game:game_over', payload)
+          if (ch.id === '1') {
+            ioInstance.to(SOCKET_ROOM_MAIN).emit('game:game_over', payload)
+          }
+        }
         if (callback) callback({ success: true })
       })
 

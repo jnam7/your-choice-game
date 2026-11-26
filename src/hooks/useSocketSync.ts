@@ -265,6 +265,16 @@ export function useSocketSync() {
       }
     }
 
+    const handleGameOver = (data: any) => {
+      if (data?.channelId && data.channelId !== effectiveChannelId) return
+      syncWithServer({
+        phase: 'gameover',
+        isGameOver: true,
+        soleWinnerId: data?.soleWinnerId || null,
+        ...(Array.isArray(data?.survivors) ? { players: data.survivors } : {}),
+      })
+    }
+
     socket.on('connect', handleConnect)
     socket.on('sync', handleStateSync)
     socket.on('game:sync', handleStateSync)
@@ -294,6 +304,7 @@ export function useSocketSync() {
     socket.on('qr:changed', handleQrModeChanged)
     socket.on('volume_updated', handleVolumeUpdated)
     socket.on('admin:volume_updated', handleVolumeUpdated)
+    socket.on('game:game_over', handleGameOver)
 
     // 소켓이 이미 연결되어 있으면 바로 조인
     if (socket.connected) {
@@ -341,6 +352,7 @@ export function useSocketSync() {
       socket.off('server:tunnel_updated', handleTunnelUpdated)
       socket.off('volume_updated', handleVolumeUpdated)
       socket.off('admin:volume_updated', handleVolumeUpdated)
+      socket.off('game:game_over', handleGameOver)
     }
   }, [syncWithServer, setServerHostUrl, effectiveChannelId])
 }

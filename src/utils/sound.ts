@@ -108,14 +108,25 @@ export function toggleSoundMute(): boolean {
   return isMutedState
 }
 
-// 모든 활성 오디오 노드 및 인스턴스 강제 정지 및 초기화 (사운드 겹침 폭발 원천 차단)
+// 오디오 인스턴스 완전 음소거 및 버퍼 해제 정리 (라운드 시작 시 0.1초 잔향 팝 노이즈 원천 차단)
+export const cleanupAndStopAudio = (audio: HTMLAudioElement | null): void => {
+  if (!audio) return
+  try {
+    audio.volume = 0 // 볼륨을 먼저 0으로 음소거
+    audio.pause()
+    audio.currentTime = 0 // 재생 위치 0초로 리셋
+    audio.removeAttribute('src') // 오디오 버퍼 강제 해제
+    audio.load()
+  } catch (e) {
+    console.warn('Audio cleanup warning:', e)
+  }
+}
+
+// 모든 활성 오디오 노드 및 인스턴스 강제 정지 및 초기화 (사운드 겹침 폭발 및 버퍼 잔향 원천 차단)
 export function stopAllSounds(): void {
-  // 1) 등록된 모든 HTMLAudioElement 인스턴스 정지 및 시간 0으로 되돌리기
+  // 1) 등록된 모든 HTMLAudioElement 인스턴스 완전 음소거 및 버퍼 정리
   Object.values(soundInstances).forEach((audio) => {
-    try {
-      audio.pause()
-      audio.currentTime = 0
-    } catch {}
+    cleanupAndStopAudio(audio)
   })
 
   // 2) 현재 활성 상태의 모든 Web Audio Oscillator 노드 즉시 중단 및 연결 해제

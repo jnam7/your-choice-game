@@ -350,8 +350,27 @@ function computeAndPublishResult(channelId = '1') {
   ch.gameState.currentResult = result
   ch.gameState.isGameOver = isGameOver
   ch.gameState.soleWinnerId = soleWinnerId
-  ch.gameState.phase = 'result'
 
+  if (isGameOver) {
+    ch.gameState.phase = 'gameover'
+    console.log(`🏆 [CH ${ch.id} GAMEOVER] 생존자 ${survivorIds.length}명 -> 즉시 게임 종료 (우승자: ${soleWinnerId || '공동'})`)
+    broadcastState(ch.id)
+    const room = getChannelRoom(ch.id)
+    const payload = {
+      channelId: ch.id,
+      survivors: ch.gameState.players.filter((p) => survivorIds.includes(p.id)),
+      alivePlayers: ch.gameState.players.filter((p) => survivorIds.includes(p.id)),
+      winnerCount: survivorIds.length,
+      soleWinnerId,
+    }
+    io.to(room).emit('game:game_over', payload)
+    if (ch.id === '1') {
+      io.to(SOCKET_ROOM_MAIN).emit('game:game_over', payload)
+    }
+    return
+  }
+
+  ch.gameState.phase = 'result'
   console.log(`📢 [CH ${ch.id} RESULT] A(${votesA}) vs B(${votesB}), 승리: ${majority}, 남은 생존자: ${survivorIds.length}명`)
   broadcastState(ch.id)
   scheduleServerResultTransition(ch.id)
@@ -916,6 +935,39 @@ io.on('connection', (socket) => {
       if (callback) callback({ success: true })
     } catch (err) {
       if (callback) callback({ success: false })
+    }
+  })
+
+  // 관리자 강제 게임 오버 처리 (2명 이하 생존 시 또는 강제 종료 시)
+  socket.on('admin:game_over', (data, callback) => {
+    try {
+      const chId = getEventChannelId(data)
+      const ch = getChannel(chId)
+      clearAllTimers(ch.id)
+      ch.gameState.phase = 'gameover'
+      ch.gameState.isGameOver = true
+      const alivePlayers = Array.isArray(data?.alivePlayers)
+        ? data.alivePlayers
+        : ch.gameState.players.filter((p) => p.status === 'alive')
+      ch.gameState.soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : (data?.soleWinnerId || null)
+      broadcastState(ch.id)
+      const room = getChannelRoom(ch.id)
+      const payload = {
+        channelId: ch.id,
+        survivors: alivePlayers,
+        alivePlayers,
+        winnerCount: alivePlayers.length,
+        soleWinnerId: ch.gameState.soleWinnerId,
+      }
+      io.to(room).emit('game:game_over', payload)
+      if (ch.id === '1') {
+        io.to(SOCKET_ROOM_MAIN).emit('game:game_over', payload)
+      }
+      console.log(`🏆 [CH ${ch.id} admin:game_over] 관리자 명령에 의한 게임 종료 수신 (생존자 ${alivePlayers.length}명)`)
+      if (callback) callback({ success: true })
+    } catch (e) {
+      console.error('[admin:game_over Error]', e)
+      if (callback) callback({ success: false, error: e.message })
     }
   })
 

@@ -818,21 +818,68 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         .filter((p) => !eliminatedIds.includes(p.id))
         .map((p) => p.id)
 
-      let isGameOver = false
-      let soleWinnerId: string | null = null
+      // 탈락자 상태 갱신 (기존 상태 보존하며 탈락자만 status = 'eliminated'로 업데이트)
+      const updatedPlayers = get().players.map((p) =>
+        eliminatedIds.includes(p.id)
+          ? { ...p, status: 'eliminated' as const, isAlive: false, eliminatedRound: roundNumber }
+          : p
+      )
 
-      // 종료 조건 처리 (생존자 판정):
-      // 1) 생존자가 2명 이하인 경우 (1~2명 남음): 우승자 식별 플래그 설정
-      // 2) 생존자가 0명인 경우 (전멸 발생): 우승자 없음 설정
-      // 중요: 생존자가 2명 이하라도 결과 화면('result')을 5초간 온전히 유지한 뒤 nextRound()에서 gameover로 전환함
-      if (survivorIds.length <= 2) {
-        isGameOver = true
-        if (survivorIds.length === 1) {
-          soleWinnerId = survivorIds[0]
+      const alivePlayers = updatedPlayers.filter((p) => p.status === 'alive')
+
+      // 생존자가 2명 이하(0명, 1명, 2명)인 경우 즉시 게임 종료(최종 결과 발표) 처리
+      if (alivePlayers.length <= 2) {
+        const isGameOver = true
+        const soleWinnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null
+        const result: RoundResult = {
+          questionId: currentQuestion.id,
+          question: currentQuestion,
+          votesA,
+          votesB,
+          totalVoters: voterIds.length,
+          nonVoters: nonVoterIds.length,
+          majority,
+          ruleMode,
+          eliminated: eliminatedIds,
+          survivors: survivorIds,
+          winnerCount: alivePlayers.length,
+          soleWinnerId,
         }
+
+        set((state) => ({
+          players: updatedPlayers,
+          currentResult: result,
+          roundResults: [...state.roundResults, result],
+          usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
+          phase: 'gameover',
+          isGameOver: true,
+          soleWinnerId,
+        }))
+        persist()
+
+        const channelId = get().channelId || '1'
+        // 서버 및 모든 클라이언트에 최종 게임 오버 이벤트 전송
+        socket.emit('admin:game_over', {
+          channelId,
+          alivePlayers,
+          survivors: alivePlayers,
+          winnerCount: alivePlayers.length,
+          soleWinnerId,
+        })
+        socket.emit('admin:sync', {
+          channelId,
+          phase: 'gameover',
+          isGameOver: true,
+          soleWinnerId,
+          currentResult: result,
+          roundResults: [...get().roundResults],
+          players: updatedPlayers,
+          votes: { ...votes },
+        })
+        return // 다음 라운드로 진행하는 코드 완전 차단
       }
 
-      // 순수 투표 집계 보존: votesA와 votesB는 소수/탈락 여부와 상관없이 실제 투표 수 그대로 유지
+      // 3명 이상 생존 시 결과 공개(result) 단계로 진입
       const result: RoundResult = {
         questionId: currentQuestion.id,
         question: currentQuestion,
@@ -844,19 +891,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         ruleMode,
         eliminated: eliminatedIds,
         survivors: survivorIds,
-        winnerCount: isGameOver ? survivorIds.length : 0,
-        soleWinnerId,
+        winnerCount: 0,
+        soleWinnerId: null,
       }
 
-      // 결과 화면('result')에서 참가자 및 시청자가 5초 동안 득표수와 탈락자를 충분히 확인하도록 phase는 항상 'result'로 유지!
       const nextPhase: GamePhase = 'result'
-
-      // 탈락자 상태 갱신 (기존 상태 보존하며 탈락자만 status = 'eliminated'로 업데이트)
-      const updatedPlayers = get().players.map((p) =>
-        eliminatedIds.includes(p.id)
-          ? { ...p, status: 'eliminated' as const, isAlive: false, eliminatedRound: roundNumber }
-          : p
-      )
 
       set((state) => ({
         players: updatedPlayers,
@@ -864,8 +903,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
         roundResults: [...state.roundResults, result],
         usedQuestionIds: [...state.usedQuestionIds, currentQuestion.id],
         phase: nextPhase,
-        isGameOver,
-        soleWinnerId,
+        isGameOver: false,
+        soleWinnerId: null,
       }))
       persist()
 
@@ -874,8 +913,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => {
       socket.emit('admin:sync', {
         channelId,
         phase: nextPhase,
-        isGameOver,
-        soleWinnerId,
+        isGameOver: false,
+        soleWinnerId: null,
         currentResult: result,
         roundResults: [...get().roundResults],
         players: updatedPlayers,
